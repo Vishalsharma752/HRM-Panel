@@ -1,0 +1,179 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* TIS Nexus brand palette — Primary Blue #025085 & Secondary Blue #00538C */
+  --color-brand-50: #e6f0fa;
+  --color-brand-100: #cce0f5;
+  --color-brand-200: #99c2eb;
+  --color-brand-300: #66a3e0;
+  --color-brand-400: #3385d6;
+  --color-brand-500: #025085;
+  --color-brand-600: #00538C;
+  --color-brand-700: #013a61;
+  --color-brand-800: #012d4b;
+  --color-brand-900: #012036;
+  --color-brand-950: #001321;
+
+  --color-accent-50: #e6f0fa;
+  --color-accent-100: #cce0f5;
+  --color-accent-200: #99c2eb;
+  --color-accent-300: #66a3e0;
+  --color-accent-400: #3385d6;
+  --color-accent-500: #00538C;
+  --color-accent-600: #025085;
+  --color-accent-700: #013a61;
+
+  /* Override standard Tailwind colors so existing indigo and violet classes map to the brand blues */
+  --color-indigo-50: #e6f0fa;
+  --color-indigo-100: #cce0f5;
+  --color-indigo-200: #99c2eb;
+  --color-indigo-300: #66a3e0;
+  --color-indigo-400: #3385d6;
+  --color-indigo-500: #025085;
+  --color-indigo-600: #00538C;
+  --color-indigo-700: #013a61;
+  --color-indigo-800: #012d4b;
+  --color-indigo-900: #012036;
+  --color-indigo-950: #001321;
+
+  --color-violet-50: #e6f0fa;
+  --color-violet-100: #cce0f5;
+  --color-violet-200: #99c2eb;
+  --color-violet-300: #66a3e0;
+  --color-violet-400: #3385d6;
+  --color-violet-500: #00538C;
+  --color-violet-600: #025085;
+  --color-violet-700: #013a61;
+  --color-violet-800: #012d4b;
+  --color-violet-900: #012036;
+  --color-violet-950: #001321;
+
+  /* Override standard rose and red colors to map to the Primary Red #E81D3B */
+  --color-rose-50: #fdf2f3;
+  --color-rose-100: #fbe5e7;
+  --color-rose-200: #f7cbcf;
+  --color-rose-300: #f39fa7;
+  --color-rose-400: #ef737f;
+  --color-rose-500: #e81d3b;
+  --color-rose-600: #d11a35;
+  --color-rose-700: #ae162c;
+  --color-rose-800: #8b1123;
+  --color-rose-900: #720e1d;
+  --color-rose-950: #3f0810;
+
+  --color-red-50: #fdf2f3;
+  --color-red-100: #fbe5e7;
+  --color-red-200: #f7cbcf;
+  --color-red-300: #f39fa7;
+  --color-red-400: #ef737f;
+  --color-red-500: #e81d3b;
+  --color-red-600: #d11a35;
+  --color-red-700: #ae162c;
+  --color-red-800: #8b1123;
+  --color-red-900: #720e1d;
+  --color-red-950: #3f0810;
+
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+  --color-ink-950: #020617;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html, body, #root {
+  height: 100%;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+main {
+  min-height: calc(100vh - 4rem - 64px); /* Prevents layout height collapse during search filtering */
+}
+
+* { box-sizing: border-box; }
+
+/* Hide scrollbar but allow scrolling */
+.scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Custom utility for gradient text */
+.text-gradient {
+  background: linear-gradient(135deg, #025085 0%, #00538C 50%, #E81D3B 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.bg-brand-gradient {
+  background: linear-gradient(135deg, #025085 0%, #00538C 50%, #E81D3B 100%);
+}
+
+.bg-brand-gradient-soft {
+  background: linear-gradient(135deg, #e6f0fa 0%, #fdf2f3 100%);
+}
+
+.shine {
+  position: relative;
+  overflow: hidden;
+}
+.shine::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -75%;
+  width: 50%; height: 100%;
+  background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.18) 50%, transparent 100%);
+  transform: skewX(-20deg);
+  animation: shine 3s infinite;
+}
+@keyframes shine {
+  0% { left: -75%; }
+  100% { left: 125%; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.4); }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.float { animation: float 4s ease-in-out infinite; }
+
+/* Focus rings */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, a:focus-visible {
+  outline: 2px solid #025085;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.6; }
