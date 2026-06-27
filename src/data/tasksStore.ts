@@ -32,7 +32,7 @@ export interface Task {
 
 const defaultTasks: Task[] = [];
 
-const LOCAL_STORAGE_KEY = "hrms_tasks";
+const LOCAL_STORAGE_KEY = "hrms_store_tasks";
 
 export function syncTasksWithEmployeesData(currentStoreTasks: Task[]) {
   // Clear the original tasks array imported from employees.ts

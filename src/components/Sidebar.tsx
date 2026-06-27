@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
 import {
   LayoutDashboard, Users, Clock, CalendarDays, Building2, ListTodo, UserCog, BarChart3,
   Bell, Settings, ChevronRight, LogOut, IndianRupee, Calendar, MessageCircle, X, ShieldAlert
@@ -23,7 +23,7 @@ export type Page =
   | "queries"
   | "admin";
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   page,
   onNavigate,
   collapsed,
@@ -209,7 +209,7 @@ export function Sidebar({
       </div>
     </aside>
   );
-}
+});
 
 
 // Role helper functions

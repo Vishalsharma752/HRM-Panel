@@ -1,24 +1,48 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { Sidebar, type Page } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { Dashboard } from "./pages/Dashboard";
-import { Employees } from "./pages/Employees";
-import { Attendance } from "./pages/Attendance";
-import { Leave } from "./pages/Leave";
-import { Departments } from "./pages/Departments";
-import { Tasks } from "./pages/Tasks";
-import { HR } from "./pages/HR";
-import { Reports } from "./pages/Reports";
-import { NotificationsPage } from "./pages/Notifications";
-import { Settings } from "./pages/Settings";
 import { Login } from "./pages/Login";
-import { Payroll } from "./pages/Payroll";
-import { Holidays } from "./pages/Holidays";
-import { AttendanceQueries } from "./pages/AttendanceQueries";
-import { AdminUsers } from "./pages/AdminUsers";
 import { Menu, Loader2 } from "lucide-react";
 import { initStorage, setCurrentUserSession } from "./data/store";
 import { useAuth } from "./hooks/useAuth";
+
+// ── Lazy-loaded pages — each becomes a separate JS chunk ───────────────────────
+const Employees         = lazy(() => import("./pages/Employees").then(m => ({ default: m.Employees })));
+const Attendance        = lazy(() => import("./pages/Attendance").then(m => ({ default: m.Attendance })));
+const Leave             = lazy(() => import("./pages/Leave").then(m => ({ default: m.Leave })));
+const Departments       = lazy(() => import("./pages/Departments").then(m => ({ default: m.Departments })));
+const Tasks             = lazy(() => import("./pages/Tasks").then(m => ({ default: m.Tasks })));
+const HR                = lazy(() => import("./pages/HR").then(m => ({ default: m.HR })));
+const Reports           = lazy(() => import("./pages/Reports").then(m => ({ default: m.Reports })));
+const NotificationsPage = lazy(() => import("./pages/Notifications").then(m => ({ default: m.NotificationsPage })));
+const Settings          = lazy(() => import("./pages/Settings").then(m => ({ default: m.Settings })));
+const Payroll           = lazy(() => import("./pages/Payroll").then(m => ({ default: m.Payroll })));
+const Holidays          = lazy(() => import("./pages/Holidays").then(m => ({ default: m.Holidays })));
+const AttendanceQueries = lazy(() => import("./pages/AttendanceQueries").then(m => ({ default: m.AttendanceQueries })));
+const AdminUsers        = lazy(() => import("./pages/AdminUsers").then(m => ({ default: m.AdminUsers })));
+
+// ── Page loading skeleton shown while lazy chunks download ────────────────────
+function PageSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="space-y-2">
+          <div className="h-8 w-48 rounded-xl bg-slate-200" />
+          <div className="h-4 w-72 rounded-lg bg-slate-100" />
+        </div>
+        <div className="h-10 w-32 rounded-xl bg-slate-200" />
+      </div>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-28 rounded-2xl bg-slate-100" />
+        ))}
+      </div>
+      <div className="h-64 rounded-2xl bg-slate-100" />
+      <div className="h-96 rounded-2xl bg-slate-100" />
+    </div>
+  );
+}
 
 const titleMap: Record<Page, string> = {
   dashboard: "Dashboard",
@@ -81,10 +105,28 @@ export default function App() {
     }
   }, [search, page]);
 
-  const handleLogout = async () => {
+  // ── Memoized handlers — stable references prevent Sidebar/Topbar re-renders ──
+  const handleLogout = useCallback(async () => {
     await signOut();
     setPage("dashboard");
-  };
+  }, [signOut]);
+
+  const handleNavigate = useCallback((p: Page) => {
+    setPage(p);
+    setSearch("");
+    setMobileNav(false);
+  }, []);
+
+  const handleToggleCollapsed = useCallback(() => setCollapsed((c) => !c), []);
+  const handleCloseMobileNav  = useCallback(() => setMobileNav(false), []);
+  const handleOpenMobileNav   = useCallback(() => setMobileNav(true), []);
+  const handleNavigateNotifications = useCallback(() => setPage("notifications"), []);
+  const handleNavigateEmployees     = useCallback(() => setPage("employees"), []);
+  const handleUpdateUser = useCallback((user: typeof currentUser) => {
+    if (!user) return;
+    setCurrentUserSession(user);
+    updateCurrentUser(user);
+  }, [updateCurrentUser]);
 
   // ── Auth Loading Screen ────────────────────────────────────────────────────
   if (authLoading) {
@@ -121,9 +163,9 @@ export default function App() {
       {/* Desktop sidebar */}
       <Sidebar
         page={page}
-        onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }}
+        onNavigate={handleNavigate}
         collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
+        onToggle={handleToggleCollapsed}
         user={currentUser}
         onLogout={handleLogout}
       />
@@ -131,13 +173,13 @@ export default function App() {
       {/* Mobile sidebar overlay */}
       {mobileNav && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-slate-900/50" onClick={() => setMobileNav(false)} />
+          <div className="absolute inset-0 bg-slate-900/50" onClick={handleCloseMobileNav} />
           <div className="relative h-full w-72 bg-white shadow-2xl">
             <Sidebar
               page={page}
-              onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }}
+              onNavigate={handleNavigate}
               collapsed={false}
-              onToggle={() => setMobileNav(false)}
+              onToggle={handleCloseMobileNav}
               user={currentUser}
               onLogout={handleLogout}
               mobile={true}
@@ -150,7 +192,7 @@ export default function App() {
         {/* Mobile top bar */}
         <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-2 lg:hidden">
           <button
-            onClick={() => setMobileNav(true)}
+            onClick={handleOpenMobileNav}
             className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"
           >
             <Menu className="h-5 w-5" />
@@ -162,39 +204,38 @@ export default function App() {
         <div className="sticky top-0 z-30 hidden lg:block">
           <Topbar
             title={titleMap[page]}
-            onAdd={currentUser.role === "Admin" ? () => setPage("employees") : undefined}
+            onAdd={currentUser.role === "Admin" ? handleNavigateEmployees : undefined}
             user={currentUser}
             onLogout={handleLogout}
             search={search}
             onSearchChange={setSearch}
-            onNavigateNotifications={() => setPage("notifications")}
+            onNavigateNotifications={handleNavigateNotifications}
           />
         </div>
 
-        {/* Main content */}
+        {/* Main content — lazy chunks load on first navigation */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          {page === "dashboard" && <Dashboard onNavigate={setPage} currentUser={currentUser} />}
-          {page === "employees" && <Employees search={search} setSearch={setSearch} />}
-          {page === "attendance" && <Attendance currentUser={currentUser} search={search} setSearch={setSearch} />}
-          {page === "leave" && <Leave currentUser={currentUser} search={search} setSearch={setSearch} />}
-          {page === "departments" && <Departments />}
-          {page === "tasks" && <Tasks currentUser={currentUser} search={search} setSearch={setSearch} />}
-          {page === "hr" && <HR />}
-          {page === "reports" && <Reports />}
-          {page === "notifications" && <NotificationsPage currentUser={currentUser} />}
-          {page === "settings" && (
-            <Settings
-              currentUser={currentUser}
-              onUpdateUser={(user) => {
-                setCurrentUserSession(user);
-                updateCurrentUser(user);
-              }}
-            />
-          )}
-          {page === "payroll" && <Payroll currentUser={currentUser} search={search} setSearch={setSearch} />}
-          {page === "holidays" && <Holidays currentUser={currentUser} />}
-          {page === "queries" && <AttendanceQueries currentUser={currentUser} />}
-          {page === "admin" && <AdminUsers currentUser={currentUser} />}
+          <Suspense fallback={<PageSkeleton />}>
+            {page === "dashboard"     && <Dashboard onNavigate={setPage} currentUser={currentUser} />}
+            {page === "employees"     && <Employees search={search} setSearch={setSearch} />}
+            {page === "attendance"    && <Attendance currentUser={currentUser} search={search} setSearch={setSearch} />}
+            {page === "leave"         && <Leave currentUser={currentUser} search={search} setSearch={setSearch} />}
+            {page === "departments"   && <Departments />}
+            {page === "tasks"         && <Tasks currentUser={currentUser} search={search} setSearch={setSearch} />}
+            {page === "hr"            && <HR />}
+            {page === "reports"       && <Reports />}
+            {page === "notifications" && <NotificationsPage currentUser={currentUser} />}
+            {page === "settings"      && (
+              <Settings
+                currentUser={currentUser}
+                onUpdateUser={handleUpdateUser}
+              />
+            )}
+            {page === "payroll"       && <Payroll currentUser={currentUser} search={search} setSearch={setSearch} />}
+            {page === "holidays"      && <Holidays currentUser={currentUser} />}
+            {page === "queries"       && <AttendanceQueries currentUser={currentUser} />}
+            {page === "admin"         && <AdminUsers currentUser={currentUser} />}
+          </Suspense>
         </main>
       </div>
     </div>

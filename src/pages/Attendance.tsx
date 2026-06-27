@@ -686,6 +686,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   }
 
   const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
+  const isFounderOrCofounder = ["Founder", "Cofounder"].includes(currentUser.role);
   const todayStr = new Date().toISOString().split("T")[0];
   const userAttendance = attendance.find(a => a.name === currentUser.name && a.date === todayStr);
 
@@ -769,6 +770,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
     distanceMeters: number;
     locationStatus: "Verified" | "Outside Office";
   }) => {
+    if (isFounderOrCofounder) return;
     const dbId = extractDbId(currentUser.id);
     if (!dbId) {
       console.error("No valid DB id found for currentUser");
@@ -816,6 +818,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
 
   // ─── Check-Out ────────────────────────────────────────────────────────────
   const handleSecureCheckOut = async (data: CheckOutData) => {
+    if (isFounderOrCofounder) return;
     const dbId = extractDbId(currentUser.id);
     if (!dbId) return;
 
@@ -912,23 +915,25 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
           <div className="absolute -left-8 -bottom-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
           <div className="relative">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-200">
-              <Clock className="h-3.5 w-3.5 text-indigo-400 animate-pulse" /> Live Punch Status
+              <Clock className="h-3.5 w-3.5 text-indigo-400 animate-pulse" /> {isFounderOrCofounder ? "Current Time" : "Live Punch Status"}
             </div>
             <div className="mt-3 font-display text-3xl font-extrabold tracking-tight">{liveTime}</div>
             <div className="text-xs text-indigo-200/80 mt-1">
               {new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 text-center mb-4 bg-white/5 rounded-xl border border-white/10 p-3">
-              <div>
-                <div className="text-[10px] uppercase font-bold text-white/50">Punch In</div>
-                <div className="font-display text-sm font-bold mt-1 text-white">{userAttendance?.checkIn || "-"}</div>
+            {!isFounderOrCofounder && (
+              <div className="mt-5 grid grid-cols-2 gap-3 text-center mb-4 bg-white/5 rounded-xl border border-white/10 p-3">
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-white/50">Punch In</div>
+                  <div className="font-display text-sm font-bold mt-1 text-white">{userAttendance?.checkIn || "-"}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-white/50">Punch Out</div>
+                  <div className="font-display text-sm font-bold mt-1 text-white">{userAttendance?.checkOut || "-"}</div>
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] uppercase font-bold text-white/50">Punch Out</div>
-                <div className="font-display text-sm font-bold mt-1 text-white">{userAttendance?.checkOut || "-"}</div>
-              </div>
-            </div>
+            )}
 
             {/* Location status for current user */}
             {userAttendance?.locationStatus && (
@@ -947,7 +952,11 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
             )}
 
             <div className="mt-2">
-              {!userAttendance ? (
+              {isFounderOrCofounder ? (
+                <div className="text-center py-4 text-xs font-semibold text-indigo-200 bg-white/5 rounded-xl border border-white/10">
+                  Attendance tracking is not applicable for your role.
+                </div>
+              ) : !userAttendance ? (
                 <button
                   onClick={() => setShowCheckInModal(true)}
                   className="w-full flex h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-red-500 to-indigo-600 text-sm font-bold hover:shadow-lg transition-all text-white"
@@ -976,9 +985,11 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
               )}
             </div>
 
-            <div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-200/60">
-              <MapPin className="h-3 w-3" /> GPS-Verified · Selfie Required · {OFFICE_RADIUS_M}m Radius
-            </div>
+            {!isFounderOrCofounder && (
+              <div className="mt-3 flex items-center justify-center gap-2 text-[10px] text-indigo-200/60">
+                <MapPin className="h-3 w-3" /> GPS-Verified · Selfie Required · {OFFICE_RADIUS_M}m Radius
+              </div>
+            )}
 
             {/* Show selfie thumbnail for the current user */}
             {userAttendance?.selfiePhoto && (

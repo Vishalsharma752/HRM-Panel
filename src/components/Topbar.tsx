@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   Search, Bell, MessageSquare, Plus, HelpCircle, LogOut,
   Megaphone, CalendarDays, Clock, CheckCircle2, IndianRupee,
@@ -62,7 +62,7 @@ function timeAgo(iso: string): string {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export function Topbar({
+export const Topbar = memo(function Topbar({
   title,
   onAdd,
   user,
@@ -336,4 +336,4 @@ export function Topbar({
       </div>
     </div>
   );
-}
+});

@@ -252,14 +252,22 @@ export const performanceData = [
   { name: "Marketing", score: 86, target: 80 }
 ];
 
-export const onboardingQueue = [
-  { id: "ONB-001", name: "Siddharth Joshi", role: "Software Engineer", stage: "Stage 5", startDate: "2026-06-15", buddy: "Rohan Mehta", avatar: getAvatar("Siddharth Joshi", "#3b82f6", "#8b5cf6") },
-  { id: "ONB-002", name: "Kritika Sen", role: "Product Manager", stage: "Stage 8", startDate: "2026-06-12", buddy: "Neha Sharma", avatar: getAvatar("Kritika Sen", "#10b981", "#14b8a6") },
-  { id: "ONB-003", name: "Rahul Deshmukh", role: "Sales Executive", stage: "Stage 2", startDate: "2026-06-25", buddy: "System Admin", avatar: getAvatar("Rahul Deshmukh", "#f59e0b", "#ef4444") }
-];
+export const onboardingQueue: {
+  id: string;
+  name: string;
+  role: string;
+  stage: string;
+  startDate: string;
+  buddy: string;
+  avatar: string;
+}[] = [];
 
-export const performanceReviews = [
-  { id: "REV-001", employee: "Rohan Mehta", reviewer: "Vikram Iyer", period: "Q1 2026", rating: 4.8, status: "Completed", avatar: getAvatar("Rohan Mehta", "#10b981", "#059669") },
-  { id: "REV-002", employee: "Aanya Kapoor", reviewer: "Vikram Iyer", period: "Q1 2026", rating: 4.6, status: "Completed", avatar: getAvatar("Aanya Kapoor", "#f59e0b", "#d97706") },
-  { id: "REV-003", employee: "Karan Bisht", reviewer: "System Admin", period: "Q1 2026", rating: 4.2, status: "Completed", avatar: getAvatar("Karan Bisht", "#3b82f6", "#1d4ed8") }
-];
+export const performanceReviews: {
+  id: string;
+  employee: string;
+  reviewer: string;
+  period: string;
+  rating: number;
+  status: string;
+  avatar: string;
+}[] = [];

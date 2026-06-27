@@ -1,4 +1,4 @@
-import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { memo, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { cn } from "../utils/cn";
 import logoUrl from "../../logo.webp";
 
@@ -36,7 +36,7 @@ export function BrandLogo({ className = "", compact = false, onDark = false }: {
 type Variant = "primary" | "secondary" | "ghost" | "outline" | "danger" | "soft" | "gradient";
 type Size = "sm" | "md" | "lg";
 
-export function Button({
+function _Button({
   variant = "primary",
   size = "md",
   leftIcon,
@@ -80,6 +80,8 @@ export function Button({
     </button>
   );
 }
+export const Button = memo(_Button);
+_Button.displayName = "Button";
 
 /* ----------------------------- Input ----------------------------- */
 export function Input({
@@ -186,7 +188,7 @@ export function Textarea({
 }
 
 /* ----------------------------- Card ----------------------------- */
-export function Card({
+export const Card = memo(function Card({
   className,
   children,
   ...rest
@@ -202,9 +204,9 @@ export function Card({
       {children}
     </div>
   );
-}
+});
 
-export function CardHeader({ title, subtitle, action, className }: { title: ReactNode; subtitle?: ReactNode; action?: ReactNode; className?: string }) {
+export const CardHeader = memo(function CardHeader({ title, subtitle, action, className }: { title: ReactNode; subtitle?: ReactNode; action?: ReactNode; className?: string }) {
   return (
     <div className={cn("flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-4", className)}>
       <div>
@@ -214,10 +216,10 @@ export function CardHeader({ title, subtitle, action, className }: { title: Reac
       {action}
     </div>
   );
-}
+});
 
 /* ----------------------------- Badge ----------------------------- */
-export function Badge({
+export const Badge = memo(function Badge({
   children,
   variant = "neutral",
   className,
@@ -252,10 +254,10 @@ export function Badge({
       {children}
     </span>
   );
-}
+});
 
 /* ----------------------------- Avatar ----------------------------- */
-export function Avatar({ src, name, size = 36, className }: { src?: string; name?: string; size?: number; className?: string }) {
+export const Avatar = memo(function Avatar({ src, name, size = 36, className }: { src?: string; name?: string; size?: number; className?: string }) {
   const safeName = name || "Unknown";
   const initials = safeName.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
   const fontSize = Math.max(10, Math.round(size * 0.36));
@@ -280,10 +282,10 @@ export function Avatar({ src, name, size = 36, className }: { src?: string; name
       {initials}
     </div>
   );
-}
+});
 
 /* ----------------------------- Stat Card ----------------------------- */
-export function StatCard({
+export const StatCard = memo(function StatCard({
   label,
   value,
   delta,
@@ -339,7 +341,7 @@ export function StatCard({
       </div>
     </div>
   );
-}
+});
 
 /* ----------------------------- Tabs ----------------------------- */
 export function Tabs({
@@ -427,7 +429,7 @@ export function EmptyState({ icon, title, description, action }: { icon: ReactNo
 }
 
 /* ----------------------------- Progress Bar ----------------------------- */
-export function Progress({ value, className, tone = "indigo" }: { value: number; className?: string; tone?: "indigo" | "emerald" | "amber" | "rose" }) {
+export const Progress = memo(function Progress({ value, className, tone = "indigo" }: { value: number; className?: string; tone?: "indigo" | "emerald" | "amber" | "rose" }) {
   const map = {
     indigo: "bg-gradient-to-r from-indigo-500 to-violet-500",
     emerald: "bg-gradient-to-r from-emerald-500 to-teal-500",
@@ -439,7 +441,7 @@ export function Progress({ value, className, tone = "indigo" }: { value: number;
       <div className={cn("h-full rounded-full transition-all", map[tone])} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
     </div>
   );
-}
+});
 
 /* ----------------------------- Toggle ----------------------------- */
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {

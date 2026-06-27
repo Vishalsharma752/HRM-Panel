@@ -7,7 +7,6 @@ import {
   recentActivities as initialActivities,
   type Employee 
 } from "./employees";
-import { getTasksFromStorage } from "./tasksStore";
 import { getInitialPayrollData } from "./payrollStore";
 import { supabase } from "../components/supabase";
 
@@ -129,9 +128,17 @@ export const initStorage = () => {
   const currentEmployees = getSafeParsed(`${STORE_PREFIX}employees`, defaultEmployees);
   localStorage.setItem(`${STORE_PREFIX}employees`, JSON.stringify(currentEmployees));
 
-  // 2. Tasks
-  const defaultTasks = getTasksFromStorage();
-  const currentTasks = getSafeParsed(`${STORE_PREFIX}tasks`, defaultTasks);
+  // 2. Tasks — default to empty; real tasks are created by users at runtime.
+  // Version stamp: bump TASKS_CLEAR_VERSION to force-wipe stale localStorage data.
+  const TASKS_CLEAR_VERSION = "v2";
+  const clearedVersion = localStorage.getItem("hrms_tasks_cleared");
+  if (clearedVersion !== TASKS_CLEAR_VERSION) {
+    // Wipe both legacy and current task keys so dummy data cannot persist
+    localStorage.removeItem("hrms_tasks");
+    localStorage.removeItem(`${STORE_PREFIX}tasks`);
+    localStorage.setItem("hrms_tasks_cleared", TASKS_CLEAR_VERSION);
+  }
+  const currentTasks = getSafeParsed(`${STORE_PREFIX}tasks`, []);
   localStorage.setItem(`${STORE_PREFIX}tasks`, JSON.stringify(currentTasks));
 
   // 3. Leaves
@@ -252,28 +259,40 @@ export function useSupabaseEmployees(): [SyncedEmployee[], boolean, string | nul
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const CACHE_KEY = "hrms_cache_employees";
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   const fetchFromSupabase = useCallback(async () => {
     setLoading(true);
     setError(null);
-    console.log("[useSupabaseEmployees] Fetching employees from Supabase...");
+
+    // ─ Check TTL cache first ─────────────────────────────────────────────────
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const { data: cachedData, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < CACHE_TTL_MS && Array.isArray(cachedData) && cachedData.length > 0) {
+          setStoredEmployees(cachedData);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch { /* ignore cache read errors */ }
 
     try {
       const { data, error: sbError } = await supabase
         .from("employees")
-        .select("*")
-        .order("id", { ascending: true });
+        .select("id, emp_code, full_name, official_email, mobile, department, role, status, doj, designation, dob, blood_group, location, salary")
+        .order("id", { ascending: true })
+        .limit(500);
 
       if (sbError) {
-        console.error("[useSupabaseEmployees] Fetch error:", sbError.message);
         setError(sbError.message);
         setLoading(false);
         return;
       }
 
-      console.log("[useSupabaseEmployees] Raw data from Supabase:", data);
-
       if (!data || data.length === 0) {
-        console.log("[useSupabaseEmployees] No records found in Supabase.");
         setLoading(false);
         return;
       }
@@ -307,11 +326,14 @@ export function useSupabaseEmployees(): [SyncedEmployee[], boolean, string | nul
         };
       });
 
-      console.log("[useSupabaseEmployees] Mapped employees:", mapped.length, "records");
+      // ─ Write to TTL cache ─────────────────────────────────────────────────────
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ data: mapped, timestamp: Date.now() }));
+      } catch { /* quota exceeded — skip caching */ }
+
       setStoredEmployees(mapped);
       setLoading(false);
     } catch (e: any) {
-      console.error("[useSupabaseEmployees] Exception:", e.message);
       setError(e.message || "Unknown error");
       setLoading(false);
     }
