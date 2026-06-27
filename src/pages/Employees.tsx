@@ -1,52 +1,72 @@
-import { useState, useMemo, useEffect } from "react";
+import { supabase } from "../components/supabase";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Search, Download, Plus, Mail, Phone, MapPin,
   X, Star, Shield, Briefcase, Users, Grid3x3, List,
-  Calendar, Award, FileText, Clock, TrendingUp, Lock,
+  Calendar, Award, FileText, Clock, TrendingUp, Lock, RefreshCw, AlertTriangle, Loader2,
 } from "lucide-react";
 import {
   PageHeader, Card, Button, Avatar, Badge, Input, Select, Tabs, Progress, EmptyState, ConfirmModal,
 } from "../components/ui";
 import { departments } from "../data/employees";
-import { useStore, SyncedEmployee, ActivityRecord, validatePassword } from "../data/store";
+import { useStore, SyncedEmployee, ActivityRecord, validatePassword, useSupabaseEmployees } from "../data/store";
 
 type BadgeVariant = "success" | "warning" | "danger" | "neutral" | "info" | "violet" | "indigo";
 const statusMeta: Record<string, { variant: BadgeVariant; label: string; dot?: boolean }> = {
   Active: { variant: "success", label: "Active", dot: true },
   "On Leave": { variant: "warning", label: "On Leave", dot: true },
-  Inactive: { variant: "neutral", label: "Inactive" },
+  Inactive: { variant: "danger", label: "Inactive", dot: true },
   Probation: { variant: "violet", label: "Probation", dot: true },
 };
 
+// Helper: generate deterministic avatar SVG
+function makeAvatar(name: string): string {
+  const safe = (name || "U").trim();
+  const initials = safe.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "?";
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${initials}</text></svg>`
+  )}`;
+}
+
+// Helper: extract numeric DB id from formatted EMP-XXX string
+function extractDbId(empId: string): number | null {
+  const parts = empId.split("-");
+  const num = parseInt(parts[parts.length - 1] || "", 10);
+  return isNaN(num) ? null : num;
+}
+
 export function Employees({ search, setSearch }: { search?: string; setSearch?: (s: string) => void }) {
+  // Supabase: employees array, loading, error, and manual refetch
+  const [, isLoading, fetchError, refetch] = useSupabaseEmployees();
   const [employees, setEmployees] = useStore<SyncedEmployee[]>("employees", []);
   const [, setActivities] = useStore<ActivityRecord[]>("activities", []);
 
+  // Debug logs
+  useEffect(() => {
+    console.log("[Employees] employees in state:", employees.length, employees[0] || "none");
+  }, [employees]);
+  useEffect(() => {
+    if (fetchError) console.error("[Employees] Supabase fetch error:", fetchError);
+  }, [fetchError]);
+
+  // View / search / filter state
   const [view, setView] = useState<"grid" | "list">("list");
   const [localSearch, setLocalSearch] = useState("");
   const searchVal = search !== undefined ? search : localSearch;
-  const onSearchChange = setSearch !== undefined ? setSearch : setLocalSearch;
+  const onSearchChange = useCallback(
+    (v: string) => (setSearch !== undefined ? setSearch(v) : setLocalSearch(v)),
+    [setSearch]
+  );
 
-  // Immediate input state
   const [inputValue, setInputValue] = useState(searchVal);
-
-  // Debounced search state used for actual list filtering
   const [debouncedSearch, setDebouncedSearch] = useState(searchVal);
 
-  // Sync input value with searchVal from parent/navigation
-  useEffect(() => {
-    setInputValue(searchVal);
-  }, [searchVal]);
-
-  // Debounce the state update of both the internal filter and the parent state
+  useEffect(() => { setInputValue(searchVal); }, [searchVal]);
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(inputValue);
-      if (inputValue !== searchVal) {
-        onSearchChange(inputValue);
-      }
+      if (inputValue !== searchVal) onSearchChange(inputValue);
     }, 300);
-
     return () => clearTimeout(handler);
   }, [inputValue, onSearchChange, searchVal]);
 
@@ -58,134 +78,324 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
   const [editingEmployee, setEditingEmployee] = useState<SyncedEmployee | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isMutating, setIsMutating] = useState(false);
 
+  // Auto-dismiss toast
   useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 3000);
-      return () => clearTimeout(timer);
-    }
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
   }, [toast]);
 
-  const drawer = useMemo(() => {
-    return employees.find(e => e.id === drawerId) || null;
-  }, [employees, drawerId]);
+  const showToast = useCallback((message: string, type: "success" | "error") => {
+    setToast({ message, type });
+  }, []);
 
+  const drawer = useMemo(
+    () => employees.find((e) => e.id === drawerId) || null,
+    [employees, drawerId]
+  );
+
+  // Normalize + filter employees — fully null-safe
   const filtered = useMemo(() => {
-    return employees.filter(e => {
-      if (debouncedSearch && !`${e.name} ${e.email} ${e.empCode} ${e.designation}`.toLowerCase().includes(debouncedSearch.toLowerCase())) return false;
-      if (dept !== "All" && e.department !== dept) return false;
-      if (status !== "All" && e.status !== status) return false;
-      if (tab === "active" && e.status !== "Active") return false;
-      if (tab === "leave" && e.status !== "On Leave") return false;
-      if (tab === "probation" && e.status !== "Probation") return false;
-      return true;
+    const q = debouncedSearch.toLowerCase().trim();
+    const result = employees
+      .map((e) => {
+        const name = (e.name || (e as any).full_name || "Unknown").trim();
+        const email = (e.email || (e as any).official_email || "").trim();
+        const empCode = (e.empCode || (e as any).emp_code || "").trim();
+        const phone = (e.phone || (e as any).mobile || "—").trim();
+        const joinDate = e.joinDate || (e as any).doj || new Date().toISOString().split("T")[0];
+        const designation = (e.designation || "Employee").trim();
+        const department = (e.department || "General").trim();
+        const statusVal = (e.status || "Active").trim() as "Active" | "On Leave" | "Inactive" | "Probation";
+        const role = (e.role || "Employee") as "Admin" | "Employee";
+        const avatar = e.avatar || makeAvatar(name);
+        return { ...e, name, email, empCode, phone, joinDate, designation, department, status: statusVal, role, avatar };
+      })
+      .filter((e) => {
+        if (q) {
+          const match =
+            e.name.toLowerCase().includes(q) ||
+            e.email.toLowerCase().includes(q) ||
+            e.empCode.toLowerCase().includes(q) ||
+            e.designation.toLowerCase().includes(q) ||
+            e.department.toLowerCase().includes(q);
+          if (!match) return false;
+        }
+        if (dept !== "All" && e.department !== dept) return false;
+        if (status !== "All" && e.status !== status) return false;
+        if (tab === "active" && e.status !== "Active") return false;
+        if (tab === "leave" && e.status !== "On Leave") return false;
+        if (tab === "probation" && e.status !== "Probation") return false;
+        return true;
+      });
+
+    // Custom sort: Navdeep Sharma first, Kashif Nawaz second, then the rest
+    result.sort((a, b) => {
+      const aName = a.name.toLowerCase();
+      const bName = b.name.toLowerCase();
+
+      const isANavdeep = aName.includes("navdeep") && aName.includes("sharma");
+      const isBNavdeep = bName.includes("navdeep") && bName.includes("sharma");
+
+      const isAKashif = aName.includes("kashif") && aName.includes("nawaz");
+      const isBKashif = bName.includes("kashif") && bName.includes("nawaz");
+
+      if (isANavdeep && isBNavdeep) return 0;
+      if (isANavdeep) return -1;
+      if (isBNavdeep) return 1;
+
+      if (isAKashif && isBKashif) return 0;
+      if (isAKashif) return -1;
+      if (isBKashif) return 1;
+
+      return 0;
     });
+
+    console.log("[Employees] filtered:", result.length, "/ total:", employees.length);
+    return result;
   }, [employees, debouncedSearch, dept, status, tab]);
 
   const allCount = employees.length;
-  const activeCount = employees.filter(e => e.status === "Active").length;
-  const leaveCount = employees.filter(e => e.status === "On Leave").length;
-  const probationCount = employees.filter(e => e.status === "Probation").length;
+  const activeCount = employees.filter((e) => (e.status || "Active") === "Active").length;
+  const leaveCount = employees.filter((e) => (e.status || "") === "On Leave").length;
+  const probationCount = employees.filter((e) => (e.status || "") === "Probation").length;
 
-  const handleAddEmployee = (newEmp: Omit<SyncedEmployee, "id" | "empCode" | "avatar">) => {
-    const nextIdNum = Math.max(...employees.map(e => {
-      const parts = e.id.split("-");
-      const num = parseInt(parts[parts.length - 1] || "0", 10);
-      return isNaN(num) ? 0 : num;
-    }), 0) + 1;
-    const padId = String(nextIdNum).padStart(3, "0");
-    const id = `EMP-${padId}`;
-    const empCode = `TISNX-${padId}`;
-    
-    const initials = newEmp.name.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
-    const bgColors = ["#6366f1", "#8b5cf6"];
-    const avatar = `data:image/svg+xml;utf8,${encodeURIComponent(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bgColors[0]}"/><stop offset="100%" stop-color="${bgColors[1]}"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${initials}</text></svg>`
-    )}`;
+  // ── ADD EMPLOYEE ─────────────────────────────────────────────────────────
+  const handleAddEmployee = useCallback(async (newEmp: Omit<SyncedEmployee, "id" | "empCode" | "avatar">) => {
+    // Validate required fields
+    if (!newEmp.name?.trim() || !newEmp.email?.trim() || !newEmp.designation?.trim() || !newEmp.department?.trim()) {
+      showToast("Required: Name, Email, Designation, Department.", "error");
+      return;
+    }
 
-    const fullEmp: SyncedEmployee = {
-      ...newEmp,
-      id,
-      empCode,
-      avatar
+    setIsMutating(true);
+    const dbRow = {
+      emp_code: null,                          // DB will auto-assign or generate
+      full_name: newEmp.name.trim(),
+      official_email: newEmp.email.trim(),
+      mobile: newEmp.phone?.trim() || null,
+      department: newEmp.department.trim(),
+      designation: newEmp.designation.trim(),
+      role: newEmp.role || "Employee",
+      status: newEmp.status || "Active",
+      doj: newEmp.joinDate || new Date().toISOString().split("T")[0],
+      location: newEmp.location || "India",
+      manager: newEmp.manager?.trim() || null,
+      salary: newEmp.salary || null,
+      password: newEmp.password || "Password123!",
     };
 
-    setEmployees(prev => [...prev, fullEmp]);
-    
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: "System Admin",
-      action: "added new employee",
-      target: fullEmp.name,
-      time: "Just now",
-      avatar: fullEmp.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
-    setToast({ message: `Successfully added employee "${fullEmp.name}".`, type: "success" });
-  };
+    console.log("[Employees] INSERT →", dbRow);
+    try {
+      const { data, error } = await supabase.from("employees").insert([dbRow]).select();
 
-  const handleEditEmployee = (updatedEmp: SyncedEmployee) => {
-    setEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
-    
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: "System Admin",
-      action: "updated details of",
-      target: updatedEmp.name,
-      time: "Just now",
-      avatar: updatedEmp.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
-    setToast({ message: `Successfully updated employee "${updatedEmp.name}".`, type: "success" });
-  };
+      if (error) {
+        console.error("[Employees] INSERT error:", error);
+        showToast(`Add failed: ${error.message}`, "error");
+        setIsMutating(false);
+        return;
+      }
 
-  const handleToggleStatus = (empId: string) => {
-    const emp = employees.find(e => e.id === empId);
+      console.log("[Employees] INSERT result:", data);
+      showToast(`Employee "${newEmp.name}" added successfully.`, "success");
+
+      // Refetch to get server-assigned ID and emp_code
+      await refetch();
+      setActivities((prev: ActivityRecord[]) => [{
+        id: Date.now(), user: "System Admin",
+        action: "added new employee", target: newEmp.name, time: "Just now", avatar: makeAvatar(newEmp.name),
+      }, ...prev]);
+    } catch (ex: any) {
+      console.error("[Employees] INSERT exception:", ex);
+      showToast(`Add failed: ${ex.message}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  }, [refetch, setActivities, showToast]);
+
+  // ── EDIT EMPLOYEE ─────────────────────────────────────────────────────────
+  const handleEditEmployee = useCallback(async (updatedEmp: SyncedEmployee) => {
+    if (!updatedEmp.name?.trim() || !updatedEmp.email?.trim() || !updatedEmp.designation?.trim() || !updatedEmp.department?.trim()) {
+      showToast("Required: Name, Email, Designation, Department.", "error");
+      return;
+    }
+
+    const dbId = extractDbId(updatedEmp.id);
+    if (dbId === null) {
+      showToast("Invalid employee ID — cannot sync to database.", "error");
+      return;
+    }
+
+    setIsMutating(true);
+    const dbRow = {
+      emp_code: updatedEmp.empCode || null,
+      full_name: updatedEmp.name.trim(),
+      official_email: updatedEmp.email.trim(),
+      mobile: updatedEmp.phone?.trim() || null,
+      department: updatedEmp.department.trim(),
+      designation: updatedEmp.designation.trim(),
+      role: updatedEmp.role || "Employee",
+      status: updatedEmp.status || "Active",
+      doj: updatedEmp.joinDate || null,
+      location: updatedEmp.location || null,
+      manager: updatedEmp.manager?.trim() || null,
+      salary: updatedEmp.salary || null,
+      password: updatedEmp.password || "Password123!",
+    };
+
+    console.log("[Employees] UPDATE id=" + dbId + " →", dbRow);
+    try {
+      const { error } = await supabase.from("employees").update(dbRow).eq("id", dbId);
+
+      if (error) {
+        console.error("[Employees] UPDATE error:", error);
+        showToast(`Update failed: ${error.message}`, "error");
+        setIsMutating(false);
+        return;
+      }
+
+      console.log("[Employees] UPDATE success");
+      showToast(`Employee "${updatedEmp.name}" updated successfully.`, "success");
+
+      await refetch();
+      setActivities((prev: ActivityRecord[]) => [{
+        id: Date.now(), user: "System Admin",
+        action: "updated details of", target: updatedEmp.name, time: "Just now", avatar: updatedEmp.avatar,
+      }, ...prev]);
+    } catch (ex: any) {
+      console.error("[Employees] UPDATE exception:", ex);
+      showToast(`Update failed: ${ex.message}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  }, [refetch, setActivities, showToast]);
+
+  // ── TOGGLE STATUS ─────────────────────────────────────────────────────────
+  const handleToggleStatus = useCallback(async (empId: string) => {
+    const emp = employees.find((e) => e.id === empId);
     if (!emp) return;
-
     const nextStatus = emp.status === "Active" ? "Inactive" : "Active";
+    const dbId = extractDbId(empId);
+    if (dbId === null) {
+      showToast("Invalid employee ID.", "error");
+      return;
+    }
 
-    setEmployees(prev => prev.map(e =>
-      e.id === empId ? { ...e, status: nextStatus } : e
-    ));
+    setIsMutating(true);
+    console.log(`[Employees] TOGGLE STATUS id=${dbId} → ${nextStatus}`);
+    try {
+      const { error } = await supabase.from("employees").update({ status: nextStatus }).eq("id", dbId);
 
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: "System Admin",
-      action: nextStatus === "Active" ? "activated" : "deactivated",
-      target: emp.name,
-      time: "Just now",
-      avatar: emp.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
-    setToast({ message: `Successfully ${nextStatus === "Active" ? "activated" : "deactivated"} employee "${emp.name}".`, type: "success" });
-  };
+      if (error) {
+        console.error("[Employees] STATUS UPDATE error:", error);
+        showToast(`Status update failed: ${error.message}`, "error");
+        setIsMutating(false);
+        return;
+      }
 
-  const handleDeleteEmployee = (empId: string) => {
-    const emp = employees.find(e => e.id === empId);
+      showToast(`${nextStatus === "Active" ? "Activated" : "Deactivated"} "${emp.name}".`, "success");
+      // Optimistic update + refetch
+      setEmployees((prev: SyncedEmployee[]) => prev.map((e) => e.id === empId ? { ...e, status: nextStatus } : e));
+      setActivities((prev: ActivityRecord[]) => [{
+        id: Date.now(), user: "System Admin",
+        action: nextStatus === "Active" ? "activated" : "deactivated",
+        target: emp.name, time: "Just now", avatar: emp.avatar,
+      }, ...prev]);
+      await refetch();
+    } catch (ex: any) {
+      console.error("[Employees] STATUS UPDATE exception:", ex);
+      showToast(`Status update failed: ${ex.message}`, "error");
+    } finally {
+      setIsMutating(false);
+    }
+  }, [employees, refetch, setActivities, setEmployees, showToast]);
+
+  // ── DELETE EMPLOYEE ───────────────────────────────────────────────────────
+  const handleDeleteEmployee = useCallback(async (empId: string) => {
+    const emp = employees.find((e) => e.id === empId);
     if (!emp) return;
 
-    // Protection for admin accounts
     if (emp.role === "Admin" || emp.email === "admin@tisnx.com") {
-      setToast({ message: "System Administrator account cannot be deleted.", type: "error" });
+      showToast("System Administrator account cannot be deleted.", "error");
       setDeletingId(null);
       return;
     }
 
-    setEmployees(prev => prev.filter(e => e.id !== empId));
+    const dbId = extractDbId(empId);
+    if (dbId === null) {
+      showToast("Invalid employee ID — cannot delete from database.", "error");
+      setDeletingId(null);
+      return;
+    }
 
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: "System Admin",
-      action: "removed employee",
-      target: emp.name,
-      time: "Just now",
-      avatar: emp.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
-    setToast({ message: `Successfully deleted employee "${emp.name}".`, type: "success" });
-    setDeletingId(null);
-  };
+    setIsMutating(true);
+    console.log(`[Employees] DELETE id=${dbId} (${emp.name})`);
+    try {
+      const { error } = await supabase.from("employees").delete().eq("id", dbId);
+
+      if (error) {
+        console.error("[Employees] DELETE error:", error);
+        showToast(`Delete failed: ${error.message}`, "error");
+        setIsMutating(false);
+        setDeletingId(null);
+        return;
+      }
+
+      console.log("[Employees] DELETE success");
+      showToast(`Employee "${emp.name}" deleted successfully.`, "success");
+
+      // Optimistic remove from UI
+      setEmployees((prev: SyncedEmployee[]) => prev.filter((e) => e.id !== empId));
+      setActivities((prev: ActivityRecord[]) => [{
+        id: Date.now(), user: "System Admin",
+        action: "removed employee", target: emp.name, time: "Just now", avatar: emp.avatar,
+      }, ...prev]);
+      if (drawerId === empId) setDrawerId(null);
+    } catch (ex: any) {
+      console.error("[Employees] DELETE exception:", ex);
+      showToast(`Delete failed: ${ex.message}`, "error");
+    } finally {
+      setIsMutating(false);
+      setDeletingId(null);
+    }
+  }, [drawerId, employees, setActivities, setEmployees, showToast]);
+
+  // ─────────────────────────────── RENDER ──────────────────────────────────
+
+  // Full-page loading state (first load)
+  if (isLoading && employees.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-10 w-10 animate-spin text-indigo-500 mx-auto" />
+          <p className="text-sm font-semibold text-slate-500">Loading employees from database…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Full-page error state (no cached data)
+  if (fetchError && employees.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-4 max-w-sm">
+          <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto" />
+          <p className="text-sm font-semibold text-slate-700">Failed to load employees</p>
+          <p className="text-xs text-slate-500">{fetchError}</p>
+          <Button variant="primary" size="md" onClick={() => refetch()}>Retry</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const supabaseErrorBanner = fetchError ? (
+    <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs font-semibold text-amber-700 flex items-center gap-2">
+      <AlertTriangle className="h-4 w-4" /> Supabase sync failed: {fetchError}. Showing cached data.
+      <button onClick={() => refetch()} className="ml-auto underline">Retry</button>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-6">
@@ -195,11 +405,15 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
         breadcrumb={[{ label: "Home" }, { label: "People" }, { label: "Employees" }]}
         actions={
           <>
+            <Button variant="secondary" size="md" leftIcon={isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} onClick={() => refetch()} disabled={isLoading}>Refresh</Button>
             <Button variant="secondary" size="md" leftIcon={<Download className="h-4 w-4" />}>Export</Button>
-            <Button variant="gradient" size="md" leftIcon={<Plus className="h-4 w-4" />} onClick={() => { setEditingEmployee(null); setShowModal(true); }}>Add Employee</Button>
+            <Button variant="gradient" size="md" leftIcon={<Plus className="h-4 w-4" />} onClick={() => { setEditingEmployee(null); setShowModal(true); }} disabled={isMutating}>Add Employee</Button>
           </>
         }
       />
+
+      {/* ✅ Supabase error banner */}
+      {supabaseErrorBanner}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -259,14 +473,35 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
         </div>
       </Card>
 
+      {/* Inline refresh loading bar */}
+      {isLoading && employees.length > 0 && (
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-600">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Syncing with database…
+        </div>
+      )}
+
+      {/* Mutation loading overlay for in-progress ops */}
+      {isMutating && (
+        <div className="flex items-center gap-2 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-600">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving changes to database…
+        </div>
+      )}
+
       {/* View */}
       {filtered.length === 0 ? (
         <Card className="p-16 flex items-center justify-center min-h-[400px]">
-          <EmptyState
-            icon={<Search className="h-6 w-6" />}
-            title="No employees found"
-            description="Try adjusting your filters or search query to see more results."
-          />
+          {isLoading ? (
+            <div className="text-center space-y-3">
+              <Loader2 className="h-8 w-8 animate-spin text-indigo-400 mx-auto" />
+              <p className="text-sm text-slate-500">Loading employees…</p>
+            </div>
+          ) : (
+            <EmptyState
+              icon={<Users className="h-6 w-6" />}
+              title={debouncedSearch || dept !== "All" || status !== "All" || tab !== "all" ? "No employees match your filters" : "No employees in database"}
+              description={debouncedSearch || dept !== "All" || status !== "All" || tab !== "all" ? "Try adjusting your search or filters to see more results." : "Add your first employee using the button above."}
+            />
+          )}
         </Card>
       ) : view === "list" ? (
         <Card>
@@ -287,7 +522,7 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
                 {filtered.map(e => {
                   const sm = statusMeta[e.status] || { variant: "neutral", label: e.status };
                   return (
-                    <tr key={e.id} className="group cursor-pointer transition-colors hover:bg-slate-50/60" onClick={() => setDrawerId(e.id)}>
+                    <tr key={e.id} className="group cursor-pointer transition-all duration-200 hover:bg-gray-50" onClick={() => setDrawerId(e.id)}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2.5">
                           <Avatar src={e.avatar} name={e.name} size={36} />
@@ -322,8 +557,7 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
                         <div className="flex justify-end gap-1.5">
                           <Button variant="secondary" size="sm" onClick={() => { setEditingEmployee(e); setShowModal(true); }}>Edit</Button>
                           <Button
-                            variant="secondary"
-                            size="sm"
+                            variant="secondary" size="sm"
                             className={e.status === "Active" ? "text-rose-600 hover:bg-rose-50" : "text-emerald-600 hover:bg-emerald-50"}
                             onClick={() => handleToggleStatus(e.id)}
                             title={e.status === "Active" ? "Deactivate" : "Activate"}
@@ -331,8 +565,7 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
                             {e.status === "Active" ? "Off" : "On"}
                           </Button>
                           <Button
-                            variant="secondary"
-                            size="sm"
+                            variant="secondary" size="sm"
                             className="text-rose-600 hover:bg-rose-50"
                             onClick={() => setDeletingId(e.id)}
                             title="Delete"
@@ -377,9 +610,7 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
                     <button className={`text-xs font-semibold ${e.status === "Active" ? "text-rose-600" : "text-emerald-600"}`} onClick={() => handleToggleStatus(e.id)}>
                       {e.status === "Active" ? "Deactivate" : "Activate"}
                     </button>
-                    <button className="text-xs font-semibold text-rose-600 hover:text-rose-700" onClick={() => setDeletingId(e.id)}>
-                      Delete
-                    </button>
+                    <button className="text-xs font-semibold text-rose-600 hover:text-rose-700" onClick={() => setDeletingId(e.id)}>Delete</button>
                   </div>
                 </div>
               </div>
@@ -388,32 +619,29 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
         </div>
       )}
 
-      {/* Employee drawer */}
+      {/* Employee Drawer */}
       {drawerId && (
-        <EmployeeDrawer 
-          employee={drawer} 
-          onClose={() => setDrawerId(null)} 
-          onToggleStatus={handleToggleStatus} 
+        <EmployeeDrawer
+          employee={drawer}
+          onClose={() => setDrawerId(null)}
+          onToggleStatus={handleToggleStatus}
           onEdit={(e) => { setEditingEmployee(e); setShowModal(true); }}
         />
       )}
 
-      {/* Add / Edit modal */}
+      {/* Add / Edit Modal */}
       {showModal && (
-        <EmployeeModal 
-          employee={editingEmployee} 
-          onClose={() => setShowModal(false)} 
+        <EmployeeModal
+          employee={editingEmployee}
+          onClose={() => setShowModal(false)}
           onSave={(emp) => {
-            if (editingEmployee) {
-              handleEditEmployee(emp);
-            } else {
-              handleAddEmployee(emp);
-            }
+            if (editingEmployee) handleEditEmployee(emp);
+            else handleAddEmployee(emp);
           }}
         />
       )}
 
-      {/* Confirm Deletion Modal */}
+      {/* Confirm Delete Modal */}
       <ConfirmModal
         isOpen={deletingId !== null}
         title="Delete Employee"
@@ -421,22 +649,18 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
         confirmLabel="Delete"
         cancelLabel="Cancel"
         variant="danger"
-        onConfirm={() => {
-          if (deletingId) handleDeleteEmployee(deletingId);
-        }}
+        onConfirm={() => { if (deletingId) handleDeleteEmployee(deletingId); }}
         onCancel={() => setDeletingId(null)}
       />
 
-      {/* Success/Error Toast notification */}
+      {/* Toast */}
       {toast && (
         <div className="fixed right-6 top-6 z-[100] flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-xl backdrop-blur-md animate-in slide-in-from-top-5 duration-300">
           <div className={`flex h-8 w-8 items-center justify-center rounded-xl text-white ${toast.type === "success" ? "bg-emerald-500" : "bg-rose-500"}`}>
             {toast.type === "success" ? "✓" : "⚠️"}
           </div>
           <div>
-            <div className="text-xs font-bold text-slate-900">
-              {toast.type === "success" ? "Success" : "Error"}
-            </div>
+            <div className="text-xs font-bold text-slate-900">{toast.type === "success" ? "Success" : "Error"}</div>
             <div className="text-[11px] text-slate-500 font-medium">{toast.message}</div>
           </div>
           <button onClick={() => setToast(null)} className="ml-4 text-slate-400 hover:text-slate-600">
@@ -449,7 +673,12 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
 }
 
 /* --------------- Drawer --------------- */
-function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employee: SyncedEmployee | null | undefined; onClose: () => void; onToggleStatus: (id: string) => void; onEdit: (e: SyncedEmployee) => void }) {
+function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: {
+  employee: SyncedEmployee | null | undefined;
+  onClose: () => void;
+  onToggleStatus: (id: string) => void;
+  onEdit: (e: SyncedEmployee) => void;
+}) {
   const [tab, setTab] = useState("profile");
   if (!employee) {
     return (
@@ -462,7 +691,22 @@ function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employe
       </div>
     );
   }
-  const sm = statusMeta[employee.status] || { variant: "neutral", label: employee.status };
+  const safeEmp = {
+    ...employee,
+    name: employee.name || (employee as any).full_name || "Unknown",
+    email: employee.email || (employee as any).official_email || "",
+    empCode: employee.empCode || (employee as any).emp_code || "",
+    phone: employee.phone || (employee as any).mobile || "—",
+    location: employee.location || "India",
+    manager: employee.manager || (employee as any).manager || "—",
+    joinDate: employee.joinDate || (employee as any).doj || new Date().toISOString().split("T")[0],
+    department: employee.department || "General",
+    designation: employee.designation || "Employee",
+    role: employee.role || "Employee",
+    status: employee.status || "Active",
+    avatar: employee.avatar || ""
+  };
+  const sm = statusMeta[safeEmp.status] || { variant: "neutral" as const, label: safeEmp.status };
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={onClose} />
@@ -473,13 +717,13 @@ function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employe
           </button>
         </div>
         <div className="-mt-14 flex flex-col items-center px-6">
-          <Avatar src={employee.avatar} name={employee.name} size={88} className="ring-4 ring-white shadow-xl" />
+          <Avatar src={safeEmp.avatar} name={safeEmp.name} size={88} className="ring-4 ring-white shadow-xl" />
           <div className="mt-3 text-center">
             <div className="flex items-center justify-center gap-2">
-              <h2 className="font-display text-xl font-extrabold text-slate-900">{employee.name}</h2>
-              {employee.role === "Admin" && <Shield className="h-4 w-4 text-amber-500" />}
+              <h2 className="font-display text-xl font-extrabold text-slate-900">{safeEmp.name}</h2>
+              {safeEmp.role === "Admin" && <Shield className="h-4 w-4 text-amber-500" />}
             </div>
-            <p className="text-sm text-slate-500">{employee.designation} · {employee.department}</p>
+            <p className="text-sm text-slate-500">{safeEmp.designation} · {safeEmp.department}</p>
             <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
               <Badge variant={sm.variant} dot={sm.dot}>{sm.label}</Badge>
               <Badge variant="indigo">⭐ Top performer</Badge>
@@ -505,16 +749,15 @@ function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employe
           {tab === "profile" && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Employee ID" value={employee.empCode} />
-                <Field label="Email" value={employee.email} />
-                <Field label="Phone" value={employee.phone} />
-                <Field label="Location" value={employee.location} />
-                <Field label="Manager" value={employee.manager || "—"} />
-                <Field label="Joined" value={new Date(employee.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
-                <Field label="Department" value={employee.department} />
-                <Field label="Role" value={employee.role} />
+                <Field label="Employee ID" value={safeEmp.empCode} />
+                <Field label="Email" value={safeEmp.email} />
+                <Field label="Phone" value={safeEmp.phone} />
+                <Field label="Location" value={safeEmp.location} />
+                <Field label="Manager" value={safeEmp.manager || "—"} />
+                <Field label="Joined" value={new Date(safeEmp.joinDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })} />
+                <Field label="Department" value={safeEmp.department} />
+                <Field label="Role" value={safeEmp.role} />
               </div>
-
               <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
                 <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Performance</div>
                 <div className="grid grid-cols-3 gap-3">
@@ -523,7 +766,6 @@ function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employe
                   <Metric label="Tasks Done" value="47/50" tone="amber" />
                 </div>
               </div>
-
               <div className="rounded-2xl border border-slate-200 p-4">
                 <div className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Skills</div>
                 <div className="flex flex-wrap gap-1.5">
@@ -635,16 +877,15 @@ function EmployeeDrawer({ employee, onClose, onToggleStatus, onEdit }: { employe
         </div>
 
         <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/50 px-6 py-3">
-          <Button 
-            variant="secondary" 
-            size="sm" 
-            className={employee.status === "Active" ? "text-rose-600 hover:bg-rose-50" : "text-emerald-600 hover:bg-emerald-50"}
-            onClick={() => onToggleStatus(employee.id)}
+          <Button
+            variant="secondary" size="sm"
+            className={safeEmp.status === "Active" ? "text-rose-600 hover:bg-rose-50" : "text-emerald-600 hover:bg-emerald-50"}
+            onClick={() => onToggleStatus(safeEmp.id)}
           >
-            {employee.status === "Active" ? "Deactivate" : "Activate"}
+            {safeEmp.status === "Active" ? "Deactivate" : "Activate"}
           </Button>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => onEdit(employee)}>Edit Profile</Button>
+            <Button variant="secondary" size="sm" onClick={() => onEdit(safeEmp)}>Edit Profile</Button>
             <Button variant="primary" size="sm" onClick={onClose}>Close</Button>
           </div>
         </div>
@@ -678,13 +919,21 @@ function Metric({ label, value, tone }: { label: string; value: string; tone: "i
 }
 
 /* --------------- Modal --------------- */
-function EmployeeModal({ employee, onClose, onSave }: { employee?: SyncedEmployee | null; onClose: () => void; onSave: (emp: any) => void }) {
+function EmployeeModal({ employee, onClose, onSave }: {
+  employee?: SyncedEmployee | null;
+  onClose: () => void;
+  onSave: (emp: any) => void;
+}) {
   const [name, setName] = useState(employee?.name || "");
   const [email, setEmail] = useState(employee?.email || "");
   const [phone, setPhone] = useState(employee?.phone || "");
   const [department, setDepartment] = useState(employee?.department || departments[0]?.name || "Engineering");
   const [designation, setDesignation] = useState(employee?.designation || "");
-  const [role, setRole] = useState<"Admin" | "Employee">(employee?.role || "Employee");
+  const [role, setRole] = useState<"Admin" | "Employee">(
+    employee?.role === "Founder" || employee?.role === "Cofounder" || employee?.role === "Admin"
+      ? "Admin"
+      : "Employee"
+  );
   const [status, setStatus] = useState<"Active" | "On Leave" | "Inactive" | "Probation">(employee?.status || "Active");
   const [location, setLocation] = useState(employee?.location || "Bengaluru, IN");
   const [joinDate, setJoinDate] = useState(employee?.joinDate || new Date().toISOString().split("T")[0]);
@@ -696,39 +945,17 @@ function EmployeeModal({ employee, onClose, onSave }: { employee?: SyncedEmploye
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
     if (!name || !email || !designation) {
       setError("Name, Email, and Designation are required.");
       return;
     }
-
     if (!employee || pwd !== employee.password) {
       const validationErr = validatePassword(pwd);
-      if (validationErr) {
-        setError(validationErr);
-        return;
-      }
+      if (validationErr) { setError(validationErr); return; }
     }
-
-    const data: any = {
-      name,
-      email,
-      phone,
-      department,
-      designation,
-      role,
-      status,
-      location,
-      joinDate,
-      manager: manager || undefined,
-      salary: salary ? parseInt(salary) : undefined,
-      password: pwd
-    };
-    if (employee) {
-      onSave({ ...employee, ...data });
-    } else {
-      onSave(data);
-    }
+    const data: any = { name, email, phone, department, designation, role, status, location, joinDate, manager: manager || undefined, salary: salary ? parseInt(salary) : undefined, password: pwd };
+    if (employee) onSave({ ...employee, ...data });
+    else onSave(data);
     onClose();
   };
 
@@ -747,13 +974,11 @@ function EmployeeModal({ employee, onClose, onSave }: { employee?: SyncedEmploye
             <X className="h-4 w-4" />
           </button>
         </div>
-
         {error && (
           <div className="mx-6 mt-4 rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">
             ⚠️ {error}
           </div>
         )}
-
         <div className="max-h-[calc(90vh-140px)] space-y-4 overflow-y-auto p-6 scrollbar-thin">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">

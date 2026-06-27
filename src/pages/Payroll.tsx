@@ -1,15 +1,15 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   IndianRupee, Search, Download, Eye, Printer,
   TrendingUp, Users, CheckCircle2, Clock, FileText, AlertCircle,
   BadgeCheck, Banknote, Calculator, BarChart3, X, Edit3, Save, RefreshCw,
 } from "lucide-react";
 import { Card, Button, Avatar } from "../components/ui";
-import { useStore, type SyncedEmployee } from "../data/store";
+import { type SyncedEmployee } from "../data/store";
+import { supabase } from "../components/supabase";
 import {
   type SalaryStructure, type PayrollRecord,
   computePayroll, formatINR, formatMonthLabel,
-  initialSalaryStructures, initialPayrollRecords,
 } from "../data/payrollStore";
 import { cn } from "../utils/cn";
 
@@ -445,10 +445,10 @@ function RunPayrollModal({
 // ─── Main Payroll Page ────────────────────────────────────────────────────────
 
 export function Payroll({ currentUser, search, setSearch }: { currentUser: SyncedEmployee; search?: string; setSearch?: (s: string) => void }) {
-  const isAdmin = currentUser.role === "Admin";
+  const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
 
-  const [structures, setStructures] = useStore<SalaryStructure[]>("payroll_structures", initialSalaryStructures);
-  const [records, setRecords] = useStore<PayrollRecord[]>("payroll_records", initialPayrollRecords);
+  const [structures, setStructures] = useState<SalaryStructure[]>([]);
+  const [records, setRecords] = useState<PayrollRecord[]>([]);
 
   const [tab, setTab] = useState<string>(isAdmin ? "dashboard" : "my-salary");
   const [localSearch, setLocalSearch] = useState("");
@@ -528,23 +528,239 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
 
   // ─── Handlers ───────────────────────────────────────────────────────────────
 
-  const handleSaveStructure = (updated: SalaryStructure) => {
-    setStructures(prev => prev.map(s => s.empId === updated.empId ? updated : s));
+  // Helpers
+  function extractDbId(empId: string): number | null {
+    const parts = empId.split("-");
+    const num = parseInt(parts[parts.length - 1] || "", 10);
+    return isNaN(num) ? null : num;
+  }
+
+  const fetchPayrollData = useCallback(async () => {
+    try {
+      const { data: structData, error: structErr } = await supabase
+        .from("salary_structures")
+        .select(`
+          *,
+          employees (
+            id,
+            full_name,
+            department,
+            designation
+          )
+        `);
+      if (structErr) throw structErr;
+
+      const { data: payrollData, error: payrollErr } = await supabase
+        .from("payroll_records")
+        .select(`
+          *,
+          employees (
+            id,
+            full_name,
+            department,
+            designation
+          )
+        `);
+      if (payrollErr) throw payrollErr;
+
+      if (structData) {
+        const mappedStructs: SalaryStructure[] = structData.map((row: any) => {
+          const emp = row.employees || {};
+          const padId = String(emp.id || 0).padStart(3, "0");
+          return {
+            empId: `EMP-${padId}`,
+            empName: emp.full_name || "Unknown",
+            department: emp.department || "General",
+            designation: emp.designation || "Employee",
+            basicSalary: Number(row.basic_salary) || 0,
+            hra: Number(row.hra) || 0,
+            transportAllowance: Number(row.transport_allowance) || 0,
+            medicalAllowance: Number(row.medical_allowance) || 0,
+            specialAllowance: Number(row.special_allowance) || 0,
+            bonus: Number(row.bonus) || 0,
+            incentives: Number(row.incentives) || 0,
+            pfDeduction: Number(row.pf_deduction) || 0,
+            professionalTax: Number(row.professional_tax) || 0,
+            incomeTax: Number(row.income_tax) || 0,
+            otherDeductions: Number(row.other_deductions) || 0,
+            overtimeRatePerHour: Number(row.overtime_rate_per_hour) || 0,
+            effectiveFrom: row.effective_from || "",
+            createdBy: row.created_by || "System",
+            updatedAt: row.updated_at || ""
+          };
+        });
+        setStructures(mappedStructs);
+      }
+
+      if (payrollData) {
+        const mappedRecords: PayrollRecord[] = payrollData.map((row: any) => {
+          const emp = row.employees || {};
+          const padId = String(emp.id || 0).padStart(3, "0");
+          return {
+            id: row.id,
+            empId: `EMP-${padId}`,
+            empName: emp.full_name || "Unknown",
+            department: emp.department || "General",
+            designation: emp.designation || "Employee",
+            avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+            )}`,
+            month: row.month,
+            monthLabel: row.month_label,
+            workingDays: row.working_days,
+            presentDays: row.present_days,
+            absentDays: row.absent_days,
+            paidLeaveDays: row.paid_leave_days,
+            unpaidLeaveDays: row.unpaid_leave_days,
+            overtimeHours: Number(row.overtime_hours) || 0,
+            basicSalary: Number(row.basic_salary) || 0,
+            hra: Number(row.hra) || 0,
+            transportAllowance: Number(row.transport_allowance) || 0,
+            medicalAllowance: Number(row.medical_allowance) || 0,
+            specialAllowance: Number(row.special_allowance) || 0,
+            bonus: Number(row.bonus) || 0,
+            incentives: Number(row.incentives) || 0,
+            overtimePay: Number(row.overtime_pay) || 0,
+            grossSalary: Number(row.gross_salary) || 0,
+            pfDeduction: Number(row.pf_deduction) || 0,
+            professionalTax: Number(row.professional_tax) || 0,
+            incomeTax: Number(row.income_tax) || 0,
+            unpaidLeaveDeduction: Number(row.unpaid_leave_deduction) || 0,
+            otherDeductions: Number(row.other_deductions) || 0,
+            totalDeductions: Number(row.total_deductions) || 0,
+            netSalary: Number(row.net_salary) || 0,
+            status: row.status,
+            processedBy: row.processed_by,
+            processedAt: row.processed_at,
+            paidAt: row.paid_at,
+            paymentMode: row.payment_mode,
+            remarks: row.remarks
+          };
+        });
+        
+        // Filter by user role if not admin
+        const filtered = mappedRecords.filter(r => isAdmin || r.empId === currentUser.id);
+        setRecords(filtered);
+      }
+    } catch (e: any) {
+      console.error("fetchPayrollData failed:", e.message);
+    }
+  }, [currentUser.id, isAdmin]);
+
+  useEffect(() => {
+    fetchPayrollData();
+  }, [fetchPayrollData]);
+
+  // ─── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleSaveStructure = async (updated: SalaryStructure) => {
+    const dbEmpId = extractDbId(updated.empId);
+    if (!dbEmpId) return;
+
+    const dbRow = {
+      employee_id: dbEmpId,
+      basic_salary: updated.basicSalary,
+      hra: updated.hra,
+      transport_allowance: updated.transportAllowance,
+      medical_allowance: updated.medicalAllowance,
+      special_allowance: updated.specialAllowance,
+      bonus: updated.bonus,
+      incentives: updated.incentives,
+      pf_deduction: updated.pfDeduction,
+      professional_tax: updated.professionalTax,
+      income_tax: updated.incomeTax,
+      other_deductions: updated.otherDeductions,
+      overtime_rate_per_hour: updated.overtimeRatePerHour,
+      effective_from: updated.effectiveFrom,
+      created_by: updated.createdBy,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      const { error: sbErr } = await supabase
+        .from("salary_structures")
+        .upsert(dbRow, { onConflict: "employee_id" });
+      if (sbErr) throw sbErr;
+      await fetchPayrollData();
+    } catch (e: any) {
+      console.error("handleSaveStructure failed:", e.message);
+    }
   };
 
-  const handleRunPayroll = (newRecords: PayrollRecord[]) => {
-    setRecords(prev => {
-      // Remove existing draft/processed for same month
-      const monthStr = newRecords[0]?.month;
-      const filtered = prev.filter(r => !(r.month === monthStr && (r.status === "Draft" || r.status === "Processed")));
-      return [...filtered, ...newRecords];
-    });
+  const handleRunPayroll = async (newRecords: PayrollRecord[]) => {
+    const monthStr = newRecords[0]?.month;
+    try {
+      if (monthStr) {
+        await supabase
+          .from("payroll_records")
+          .delete()
+          .eq("month", monthStr)
+          .in("status", ["Draft", "Processed"]);
+      }
+
+      const upsertRows = newRecords.map(rec => {
+        const dbEmpId = extractDbId(rec.empId);
+        return {
+          id: rec.id,
+          employee_id: dbEmpId!,
+          month: rec.month,
+          month_label: rec.monthLabel,
+          working_days: rec.workingDays,
+          present_days: rec.presentDays,
+          absent_days: rec.absentDays,
+          paid_leave_days: rec.paidLeaveDays,
+          unpaid_leave_days: rec.unpaidLeaveDays,
+          overtime_hours: rec.overtimeHours,
+          basic_salary: rec.basicSalary,
+          hra: rec.hra,
+          transport_allowance: rec.transportAllowance,
+          medical_allowance: rec.medicalAllowance,
+          special_allowance: rec.specialAllowance,
+          bonus: rec.bonus,
+          incentives: rec.incentives,
+          overtime_pay: rec.overtimePay,
+          gross_salary: rec.grossSalary,
+          pf_deduction: rec.pfDeduction,
+          professional_tax: rec.professionalTax,
+          income_tax: rec.incomeTax,
+          unpaid_leave_deduction: rec.unpaidLeaveDeduction,
+          other_deductions: rec.otherDeductions,
+          total_deductions: rec.totalDeductions,
+          net_salary: rec.netSalary,
+          status: rec.status,
+          processed_by: rec.processedBy,
+          processed_at: rec.processedAt,
+          paid_at: rec.paidAt,
+          payment_mode: rec.paymentMode,
+          remarks: rec.remarks
+        };
+      });
+
+      const { error: sbErr } = await supabase
+        .from("payroll_records")
+        .upsert(upsertRows);
+      if (sbErr) throw sbErr;
+      await fetchPayrollData();
+    } catch (e: any) {
+      console.error("handleRunPayroll failed:", e.message);
+    }
   };
 
-  const handleMarkPaid = (id: string) => {
-    setRecords(prev => prev.map(r =>
-      r.id === id ? { ...r, status: "Paid", paidAt: new Date().toISOString(), paymentMode: "Bank Transfer" } : r
-    ));
+  const handleMarkPaid = async (id: string) => {
+    try {
+      const { error: sbErr } = await supabase
+        .from("payroll_records")
+        .update({
+          status: "Paid",
+          paid_at: new Date().toISOString(),
+          payment_mode: "Bank Transfer"
+        })
+        .eq("id", id);
+      if (sbErr) throw sbErr;
+      await fetchPayrollData();
+    } catch (e: any) {
+      console.error("handleMarkPaid failed:", e.message);
+    }
   };
 
   // ─── Admin Dashboard Tab ───────────────────────────────────────────────────
@@ -691,7 +907,7 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
                 const net = Math.max(0, gross - ded);
                 const allowances = s.transportAllowance + s.medicalAllowance + s.specialAllowance;
                 return (
-                  <tr key={s.empId} className="hover:bg-slate-50/60 transition-colors">
+                  <tr key={s.empId} className="transition-all duration-200 hover:bg-gray-50">
                     <td className="px-4 py-3">
                       <div className="font-semibold text-slate-900">{s.empName}</div>
                       <div className="text-[11px] text-slate-500">{s.empId}</div>
@@ -766,7 +982,7 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredRecords.map(rec => (
-                <tr key={rec.id} className="hover:bg-slate-50/60 transition-colors">
+                <tr key={rec.id} className="transition-all duration-200 hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <Avatar src={rec.avatar} name={rec.empName} size={32} />

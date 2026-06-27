@@ -634,7 +634,11 @@ function UserFormModal({
   const [phone, setPhone] = useState(employee?.phone || "");
   const [department, setDepartment] = useState(employee?.department || departments[0]?.name || "Engineering");
   const [designation, setDesignation] = useState(employee?.designation || "");
-  const [role, setRole] = useState<"Admin" | "Employee">(employee?.role || "Employee");
+  const [role, setRole] = useState<"Admin" | "Employee">(
+    employee?.role === "Founder" || employee?.role === "Cofounder" || employee?.role === "Admin"
+      ? "Admin"
+      : "Employee"
+  );
   const [status, setStatus] = useState<SyncedEmployee["status"]>(employee?.status || "Active");
   const [location, setLocation] = useState(employee?.location || "Bengaluru, IN");
   const [joinDate, setJoinDate] = useState(employee?.joinDate || new Date().toISOString().split("T")[0]);

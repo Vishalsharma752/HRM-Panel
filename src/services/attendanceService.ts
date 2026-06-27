@@ -1,35 +1,8 @@
-﻿import type { AttendanceRecord } from "../data/store";
-
-const STORE_PREFIX = "hrms_store_";
+import { supabase } from "../components/supabase";
+import type { AttendanceRecord } from "../data/store";
 
 /**
  * Fetch attendance records for a specific employee in a given month.
- *
- * ─── Supabase migration guide ──────────────────────────────────────────────
- * 1. Install: npm install @supabase/supabase-js
- * 2. Replace this function body with:
- *
- *   import { createClient } from "@supabase/supabase-js";
- *   const supabase = createClient(
- *     import.meta.env.VITE_SUPABASE_URL,
- *     import.meta.env.VITE_SUPABASE_ANON_KEY
- *   );
- *   const startDate = `${year}-${String(month).padStart(2,"0")}-01`;
- *   const endDate   = `${year}-${String(month).padStart(2,"0")}-31`;
- *   const { data } = await supabase
- *     .from("attendance")
- *     .select("employee_id, date, check_in, check_out, status")
- *     .eq("employee_id", employeeId)
- *     .gte("date", startDate)
- *     .lte("date", endDate)
- *     .order("date", { ascending: true });
- *   return data ?? [];
- *
- * ──────────────────────────────────────────────────────────────────────────
- *
- * @param employeeName  Display name matching the `name` field in localStorage
- * @param year          4-digit year (e.g., 2026)
- * @param month         1-indexed month (1 = Jan ... 12 = Dec)
  */
 export async function fetchMonthAttendance(
   employeeName: string,
@@ -37,14 +10,70 @@ export async function fetchMonthAttendance(
   month: number
 ): Promise<AttendanceRecord[]> {
   try {
-    const raw = localStorage.getItem(`${STORE_PREFIX}attendance`);
-    if (!raw) return [];
-    const all: AttendanceRecord[] = JSON.parse(raw);
-    const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
-    return all.filter(
-      (r) => r.name === employeeName && r.date?.startsWith(monthPrefix)
-    );
-  } catch {
+    const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+    const endDate = `${year}-${String(month).padStart(2, "0")}-31`;
+
+    const { data, error } = await supabase
+      .from("attendance")
+      .select(`
+        id,
+        check_in,
+        check_out,
+        status,
+        date,
+        selfie_photo,
+        lat,
+        lng,
+        location_status,
+        distance_meters,
+        check_in_time,
+        check_out_time,
+        check_out_lat,
+        check_out_lng,
+        check_out_distance_meters,
+        check_out_location_status,
+        employees!inner (
+          id,
+          full_name,
+          department
+        )
+      `)
+      .eq("employees.full_name", employeeName)
+      .gte("date", startDate)
+      .lte("date", endDate)
+      .order("date", { ascending: true });
+
+    if (error) throw error;
+
+    if (!data) return [];
+
+    return data.map((row: any) => {
+      const emp = row.employees || {};
+      const padId = String(emp.id || 0).padStart(3, "0");
+      return {
+        id: `EMP-${padId}`,
+        name: emp.full_name || "Unknown",
+        department: emp.department || "General",
+        checkIn: row.check_in || "—",
+        checkOut: row.check_out || "—",
+        status: row.status || "Absent",
+        avatar: "",
+        date: row.date,
+        selfiePhoto: row.selfie_photo,
+        lat: row.lat ? parseFloat(row.lat) : undefined,
+        lng: row.lng ? parseFloat(row.lng) : undefined,
+        locationStatus: row.location_status,
+        distanceMeters: row.distance_meters ? parseFloat(row.distance_meters) : undefined,
+        checkInTime: row.check_in_time,
+        checkOutTime: row.check_out_time,
+        checkOutLat: row.check_out_lat ? parseFloat(row.check_out_lat) : undefined,
+        checkOutLng: row.check_out_lng ? parseFloat(row.check_out_lng) : undefined,
+        checkOutDistanceMeters: row.check_out_distance_meters ? parseFloat(row.check_out_distance_meters) : undefined,
+        checkOutLocationStatus: row.check_out_location_status
+      };
+    });
+  } catch (err) {
+    console.error("fetchMonthAttendance failed:", err);
     return [];
   }
 }

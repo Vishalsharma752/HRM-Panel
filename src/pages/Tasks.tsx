@@ -36,9 +36,33 @@ const getLocalDateString = () => {
 const mockToday = getLocalDateString(); // Setup dynamic date for overdue calculations
 
 export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedEmployee; search?: string; setSearch?: (s: string) => void }) {
-  // --- States ---
   const [tasks, setTasks] = useStore<Task[]>("tasks", []);
   const [employees] = useStore<SyncedEmployee[]>("employees", []);
+
+  const sortedEmployees = useMemo(() => {
+    const list = [...employees];
+    list.sort((a, b) => {
+      const aName = (a.name || "").toLowerCase();
+      const bName = (b.name || "").toLowerCase();
+
+      const isANavdeep = aName.includes("navdeep") && aName.includes("sharma");
+      const isBNavdeep = bName.includes("navdeep") && bName.includes("sharma");
+
+      const isAKashif = aName.includes("kashif") && aName.includes("nawaz");
+      const isBKashif = bName.includes("kashif") && bName.includes("nawaz");
+
+      if (isANavdeep && isBNavdeep) return 0;
+      if (isANavdeep) return -1;
+      if (isBNavdeep) return 1;
+
+      if (isAKashif && isBKashif) return 0;
+      if (isAKashif) return -1;
+      if (isBKashif) return 1;
+
+      return 0;
+    });
+    return list;
+  }, [employees]);
 
   const [view, setView] = useState<"list" | "kanban">("kanban");
   const [tab, setTab] = useState("all");
@@ -104,7 +128,7 @@ export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedE
   const [editingCommentText, setEditingCommentText] = useState("");
 
   // Role Checker
-  const isAdmin = currentUser.role === "Admin";
+  const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
 
   // --- Handlers & Store Sync ---
   const updateTasksState = (updatedList: Task[]) => {
@@ -397,7 +421,7 @@ export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedE
       if (selectedPriority !== "All" && t.priority !== selectedPriority) return false;
 
       // Tab filters
-      if (currentUser.role === "Admin") {
+      if (isAdmin) {
         if (tab === "mine") {
           if (t.assignee !== currentUser.name) return false;
         } else if (tab === "team") {
@@ -635,7 +659,7 @@ export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedE
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedTasks.map(t => (
-                  <tr key={t.id} className="transition-colors hover:bg-slate-50/50">
+                  <tr key={t.id} className="transition-all duration-200 hover:bg-gray-50">
                     <td className="px-6 py-3.5 font-bold text-xs text-slate-400">{t.id}</td>
                     <td className="px-6 py-3.5">
                       <button
@@ -849,7 +873,7 @@ export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedE
                   onChange={(e) => setFormAssigneeId(e.target.value)}
                   required
                 >
-                  {employees.map(emp => (
+                  {sortedEmployees.map(emp => (
                     <option key={emp.id} value={emp.id}>
                       {emp.name} ({emp.department})
                     </option>
@@ -1049,7 +1073,7 @@ export function Tasks({ currentUser, search, setSearch }: { currentUser: SyncedE
 
                 <div className="space-y-3">
                   {selectedTask.comments.map(c => {
-                    const isAuthorOrAdmin = c.authorName === currentUser.name || currentUser.role === "Admin";
+                    const isAuthorOrAdmin = c.authorName === currentUser.name || isAdmin;
                     const isEditing = editingCommentId === c.id;
 
                     return (

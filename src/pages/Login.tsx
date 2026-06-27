@@ -1,178 +1,149 @@
 import { useState } from "react";
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, UserCheck } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, UserCheck, Loader2 } from "lucide-react";
 import { BrandLogo, Button, Input } from "../components/ui";
-import { type SyncedEmployee, validatePassword } from "../data/store";
+import { validatePassword } from "../data/store";
+import { supabase } from "../components/supabase";
 
-export function Login({ onLogin }: { onLogin: (user: SyncedEmployee) => void }) {
+interface LoginProps {
+  onSignIn: (email: string, password: string) => Promise<void>;
+  authLoading: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
+}
+
+export function Login({ onSignIn, authLoading, authError, clearAuthError }: LoginProps) {
   const [showPwd, setShowPwd] = useState(false);
   const [view, setView] = useState<"login" | "forgot" | "change">("login");
+
+  // Login form state
   const [email, setEmail] = useState("admin@tisnx.com");
   const [password, setPassword] = useState("Password123!");
+
+  // Forgot / reset state
   const [resetEmail, setResetEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
+  const [localLoading, setLocalLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-
-    // Look up in localStorage hrms_store_employees
-    const storedEmps = localStorage.getItem("hrms_store_employees");
-    if (!storedEmps) {
-      setError("System database not initialized. Please refresh page.");
+    clearAuthError();
+    setLocalError("");
+    if (!email.trim() || !password) {
+      setLocalError("Email and password are required.");
       return;
     }
+    await onSignIn(email.trim(), password);
+  };
+
+  const handleQuickLogin = async (quickEmail: string, quickPassword = "Password123!") => {
+    clearAuthError();
+    setLocalError("");
+    setEmail(quickEmail);
+    setPassword(quickPassword);
+    await onSignIn(quickEmail, quickPassword);
+  };
+
+  const handleForgotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError("");
+    setSuccessMessage("");
+    setLocalLoading(true);
 
     try {
-      const emps: SyncedEmployee[] = JSON.parse(storedEmps);
-      let matched = emps.find(emp => emp.email.toLowerCase() === email.trim().toLowerCase());
-      if (!matched && email.trim().toLowerCase() === "admin@tisnx.com" && password === "Password123!") {
-        matched = {
-          id: "EMP-ADMIN",
-          empCode: "TISNX-ADMIN",
-          name: "System Admin",
-          email: "admin@tisnx.com",
-          phone: "+91 99999 99999",
-          avatar: "",
-          department: "Management",
-          designation: "Administrator",
-          role: "Admin",
-          status: "Active",
-          joinDate: new Date().toISOString().split("T")[0],
-          location: "Remote",
-          salary: 0,
-          password: "Password123!"
-        };
-      }
-      if (matched) {
-        if (matched.status === "Inactive") {
-          setError("This account is currently deactivated. Contact Admin.");
+      // Try Supabase Auth password reset email first
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
+        redirectTo: `${window.location.origin}/?reset=true`,
+      });
+
+      if (error) {
+        // Supabase Auth reset failed — verify email exists in employees table
+        const { data, error: dbErr } = await supabase
+          .from("employees")
+          .select("official_email, status")
+          .or(`official_email.ilike.${resetEmail.trim()},email.ilike.${resetEmail.trim()}`)
+          .limit(1)
+          .maybeSingle();
+
+        if (dbErr || !data) {
+          setLocalError("No account found with this email address.");
+          setLocalLoading(false);
           return;
         }
-        
-        const storedPwd = matched.password || "Password123!";
-        if (password !== storedPwd) {
-          setError("Invalid password. Please try again.");
+        if (data.status === "Inactive") {
+          setLocalError("This account has been deactivated. Contact Administrator.");
+          setLocalLoading(false);
           return;
         }
 
-        onLogin(matched);
+        // Email exists in employees table — let them set new password locally
+        setView("change");
       } else {
-        setError("Invalid email address. Please use a registered work email.");
+        setSuccessMessage("Password reset email sent. Check your inbox.");
       }
-    } catch (err) {
-      console.error(err);
-      setError("An error occurred during sign-in.");
+    } catch (ex: any) {
+      setLocalError("An error occurred. Please try again.");
+    } finally {
+      setLocalLoading(false);
     }
   };
 
-  const handleQuickLogin = (quickEmail: string) => {
-    setError("");
-    const storedEmps = localStorage.getItem("hrms_store_employees");
-    if (storedEmps) {
-      try {
-        const emps: SyncedEmployee[] = JSON.parse(storedEmps);
-        let matched = emps.find(emp => emp.email === quickEmail);
-        if (!matched && quickEmail === "admin@tisnx.com") {
-          matched = {
-            id: "EMP-ADMIN",
-            empCode: "TISNX-ADMIN",
-            name: "System Admin",
-            email: "admin@tisnx.com",
-            phone: "+91 99999 99999",
-            avatar: "",
-            department: "Management",
-            designation: "Administrator",
-            role: "Admin",
-            status: "Active",
-            joinDate: new Date().toISOString().split("T")[0],
-            location: "Remote",
-            salary: 0,
-            password: "Password123!"
-          };
-        }
-        if (matched) {
-          if (matched.status === "Inactive") {
-            setError("This account is currently deactivated. Contact Admin.");
-            return;
-          }
-          onLogin(matched);
-        }
-      } catch (err) {
-        console.error(err);
-        setError("An error occurred during quick sign-in.");
-      }
-    }
-  };
-
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const handleChangeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-
-    const storedEmps = localStorage.getItem("hrms_store_employees");
-    if (!storedEmps) {
-      setError("Database not initialized.");
-      return;
-    }
-
-    const emps: SyncedEmployee[] = JSON.parse(storedEmps);
-    const matched = emps.find(emp => emp.email.toLowerCase() === resetEmail.trim().toLowerCase());
-    if (!matched) {
-      setError("Work email not found in our directory.");
-      return;
-    }
-    if (matched.status === "Inactive") {
-      setError("This account is currently deactivated. Contact Admin.");
-      return;
-    }
-
-    setView("change");
-  };
-
-  const handleChangeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
+    setLocalError("");
+    setLocalLoading(true);
 
     if (newPassword !== confirmPassword) {
-      setError("Passwords do not match.");
+      setLocalError("Passwords do not match.");
+      setLocalLoading(false);
       return;
     }
 
     const validationErr = validatePassword(newPassword);
     if (validationErr) {
-      setError(validationErr);
-      return;
-    }
-
-    const storedEmps = localStorage.getItem("hrms_store_employees");
-    if (!storedEmps) {
-      setError("Database not initialized.");
+      setLocalError(validationErr);
+      setLocalLoading(false);
       return;
     }
 
     try {
-      const emps: SyncedEmployee[] = JSON.parse(storedEmps);
-      const updated = emps.map(emp => {
-        if (emp.email.toLowerCase() === resetEmail.trim().toLowerCase()) {
-          return { ...emp, password: newPassword };
-        }
-        return emp;
-      });
-      localStorage.setItem("hrms_store_employees", JSON.stringify(updated));
-      window.dispatchEvent(new Event("storage-sync"));
+      // Update in Supabase Auth (for users who have auth accounts)
+      const { error: authErr } = await supabase.auth.updateUser({ password: newPassword });
+      if (authErr) console.warn("[Login] Auth update failed:", authErr.message);
 
-      alert("Password updated successfully. Please login with your new password.");
-      setView("login");
-      setEmail(resetEmail);
-      setPassword(newPassword);
-      setNewPassword("");
-      setConfirmPassword("");
-    } catch (err) {
-      console.error(err);
-      setError("An error occurred while updating the password.");
+      // Update in employees table (for all employees)
+      const { error: dbErr } = await supabase
+        .from("employees")
+        .update({ password: newPassword })
+        .or(`official_email.ilike.${resetEmail.trim()},email.ilike.${resetEmail.trim()}`);
+
+      if (dbErr) {
+        console.error("[Login] DB password update error:", dbErr.message);
+        setLocalError(`Database update failed: ${dbErr.message}`);
+        setLocalLoading(false);
+        return;
+      }
+
+      setSuccessMessage("Password updated successfully. Please sign in with your new password.");
+      setTimeout(() => {
+        setView("login");
+        setEmail(resetEmail);
+        setPassword(newPassword);
+        setNewPassword("");
+        setConfirmPassword("");
+        setSuccessMessage("");
+      }, 2000);
+    } catch (ex: any) {
+      setLocalError("An error occurred. Please try again.");
+    } finally {
+      setLocalLoading(false);
     }
   };
+
+  const displayError = authError || localError;
+  const isSubmitting = authLoading || localLoading;
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -222,17 +193,10 @@ export function Login({ onLogin }: { onLogin: (user: SyncedEmployee) => void }) 
           </p>
           <div className="grid grid-cols-3 gap-3 pt-2">
             {[
-              { v: (() => {
-                try {
-                  const stored = localStorage.getItem("hrms_store_employees");
-                  return stored ? String(JSON.parse(stored).length) : "0";
-                } catch {
-                  return "0";
-                }
-              })(), l: "Employees" },
+              { v: "50+", l: "Employees" },
               { v: "8", l: "Departments" },
               { v: "99.9%", l: "Uptime" },
-            ].map(s => (
+            ].map((s) => (
               <div key={s.l} className="rounded-2xl border border-white/10 bg-white/5 p-3 backdrop-blur">
                 <div className="font-display text-2xl font-extrabold">{s.v}</div>
                 <div className="text-[11px] uppercase tracking-wider text-indigo-200/80">{s.l}</div>
@@ -252,6 +216,8 @@ export function Login({ onLogin }: { onLogin: (user: SyncedEmployee) => void }) 
           <div className="mb-8 lg:hidden">
             <BrandLogo />
           </div>
+
+          {/* ── LOGIN VIEW ── */}
           {view === "login" && (
             <form onSubmit={handleLoginSubmit} className="space-y-6">
               <div>
@@ -259,134 +225,199 @@ export function Login({ onLogin }: { onLogin: (user: SyncedEmployee) => void }) 
                 <p className="mt-1.5 text-sm text-slate-500">Sign in to your TIS Nexus employee portal</p>
               </div>
 
-              {error && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">
-                  ⚠️ {error}
+              {displayError && (
+                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700 flex items-start gap-2">
+                  <span className="mt-0.5">⚠️</span>
+                  <span>{displayError}</span>
                 </div>
               )}
 
               <div className="space-y-4">
-                <Input 
-                  label="Work Email" 
-                  type="email" 
-                  placeholder="you@tisnx.com" 
-                  leftIcon={<Mail className="h-4 w-4" />} 
+                <Input
+                  label="Work Email"
+                  type="email"
+                  id="login-email"
+                  placeholder="you@tisnx.com"
+                  leftIcon={<Mail className="h-4 w-4" />}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => { setEmail(e.target.value); clearAuthError(); setLocalError(""); }}
                   required
+                  disabled={isSubmitting}
                 />
                 <div>
-                 <Input 
-                    label="Password" 
-                    type={showPwd ? "text" : "password"} 
-                    placeholder="Enter your password" 
-                    leftIcon={<Lock className="h-4 w-4" />} 
+                  <Input
+                    label="Password"
+                    id="login-password"
+                    type={showPwd ? "text" : "password"}
+                    placeholder="Enter your password"
+                    leftIcon={<Lock className="h-4 w-4" />}
                     rightIcon={
-                      <button type="button" onClick={() => setShowPwd(s => !s)} className="pointer-events-auto">
+                      <button type="button" onClick={() => setShowPwd((s) => !s)} className="pointer-events-auto" tabIndex={-1}>
                         {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
-                    } 
+                    }
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => { setPassword(e.target.value); clearAuthError(); setLocalError(""); }}
                     required
+                    disabled={isSubmitting}
                   />
                   <div className="mt-2 flex items-center justify-between">
                     <label className="inline-flex items-center gap-2 text-xs text-slate-600">
                       <input type="checkbox" defaultChecked className="rounded border-slate-300" />
                       Remember me for 30 days
                     </label>
-                    <button type="button" onClick={() => { setError(""); setView("forgot"); }} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Forgot password?</button>
+                    <button
+                      type="button"
+                      onClick={() => { clearAuthError(); setLocalError(""); setView("forgot"); }}
+                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                      disabled={isSubmitting}
+                    >
+                      Forgot password?
+                    </button>
                   </div>
                 </div>
 
-                <Button type="submit" variant="gradient" size="lg" className="w-full" rightIcon={<ArrowRight className="h-4 w-4" />}>
-                  Sign in to dashboard
+                <Button
+                  type="submit"
+                  variant="gradient"
+                  size="lg"
+                  className="w-full"
+                  disabled={isSubmitting}
+                  rightIcon={isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                >
+                  {isSubmitting ? "Signing in…" : "Sign in to dashboard"}
                 </Button>
 
                 <div className="relative my-4 flex items-center gap-3 text-[10px] uppercase tracking-wider text-slate-400">
                   <span className="flex-1 border-t border-slate-200" /> Quick Account Switcher <span className="flex-1 border-t border-slate-200" />
                 </div>
 
-                <div className="grid gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleQuickLogin("admin@tisnx.com")}
-                    className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white p-2.5 text-center transition-all hover:border-indigo-300 hover:bg-slate-50 w-full"
-                  >
-                    <UserCheck className="h-4.5 w-4.5 text-indigo-600 mb-1" />
-                    <span className="text-[10px] font-bold text-slate-800 leading-tight">System Admin</span>
-                    <span className="text-[8px] text-indigo-600 font-bold uppercase">admin@tisnx.com</span>
-                  </button>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: "Admin", email: "admin@tisnx.com", color: "indigo" },
+                    { label: "Manager", email: "vikram@tisnx.com", color: "emerald" },
+                    { label: "Employee", email: "rohan@tisnx.com", color: "amber" },
+                  ].map(({ label, email: qEmail, color }) => (
+                    <button
+                      key={qEmail}
+                      type="button"
+                      onClick={() => handleQuickLogin(qEmail)}
+                      disabled={isSubmitting}
+                      className={`flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-white p-2 text-center transition-all hover:border-${color}-300 hover:bg-slate-50 w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      <UserCheck className={`h-4 w-4 text-${color}-600 mb-1`} />
+                      <span className="text-[10px] font-bold text-slate-800 leading-tight">{label}</span>
+                      <span className={`text-[8px] text-${color}-600 font-bold uppercase truncate w-full px-1`}>{qEmail}</span>
+                    </button>
+                  ))}
                 </div>
-                <p className="text-center text-[10px] text-slate-400 mt-1">Password: <span className="font-bold text-slate-600">Password123!</span></p>
-              </div>
-            </form>
-          )}
-          {view === "forgot" && (
-            <form onSubmit={handleForgotSubmit} className="space-y-4">
-              <div>
-                <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Reset password</h2>
-                <p className="mt-1.5 text-sm text-slate-500">We'll verify your email and guide you to reset your password</p>
-              </div>
-              {error && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">
-                  ⚠️ {error}
-                </div>
-              )}
-              <div className="space-y-4">
-                <Input 
-                  label="Work Email" 
-                  type="email" 
-                  placeholder="you@tisnx.com" 
-                  leftIcon={<Mail className="h-4 w-4" />} 
-                  value={resetEmail}
-                  onChange={(e) => setResetEmail(e.target.value)}
-                  required
-                />
-                <Button type="submit" variant="gradient" size="lg" className="w-full" rightIcon={<ArrowRight className="h-4 w-4" />}>Send reset link</Button>
-                <p className="text-center text-xs text-slate-500">
-                  <button type="button" onClick={() => { setError(""); setView("login"); }} className="font-semibold text-indigo-600 hover:text-indigo-700">← Back to sign in</button>
+                <p className="text-center text-[10px] text-slate-400 mt-1">
+                  Default Password: <span className="font-bold text-slate-600">Password123!</span>
                 </p>
               </div>
             </form>
           )}
+
+          {/* ── FORGOT VIEW ── */}
+          {view === "forgot" && (
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
+              <div>
+                <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Reset password</h2>
+                <p className="mt-1.5 text-sm text-slate-500">We'll verify your email and send reset instructions</p>
+              </div>
+              {displayError && (
+                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">⚠️ {displayError}</div>
+              )}
+              {successMessage && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3.5 text-xs font-semibold text-emerald-700">✓ {successMessage}</div>
+              )}
+              <div className="space-y-4">
+                <Input
+                  label="Work Email"
+                  type="email"
+                  id="forgot-email"
+                  placeholder="you@tisnx.com"
+                  leftIcon={<Mail className="h-4 w-4" />}
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  required
+                  disabled={isSubmitting}
+                />
+                <Button
+                  type="submit"
+                  variant="gradient"
+                  size="lg"
+                  className="w-full"
+                  disabled={isSubmitting}
+                  rightIcon={isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                >
+                  {isSubmitting ? "Sending…" : "Send reset link"}
+                </Button>
+                <p className="text-center text-xs text-slate-500">
+                  <button
+                    type="button"
+                    onClick={() => { setLocalError(""); clearAuthError(); setView("login"); }}
+                    className="font-semibold text-indigo-600 hover:text-indigo-700"
+                  >
+                    ← Back to sign in
+                  </button>
+                </p>
+              </div>
+            </form>
+          )}
+
+          {/* ── CHANGE PASSWORD VIEW ── */}
           {view === "change" && (
             <form onSubmit={handleChangeSubmit} className="space-y-4">
               <div>
                 <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Set new password</h2>
                 <p className="mt-1.5 text-sm text-slate-500">Your new password must be different from previous ones</p>
               </div>
-              {error && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">
-                  ⚠️ {error}
-                </div>
+              {displayError && (
+                <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">⚠️ {displayError}</div>
+              )}
+              {successMessage && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3.5 text-xs font-semibold text-emerald-700">✓ {successMessage}</div>
               )}
               <div className="space-y-4">
-                <Input 
-                  label="New password" 
-                  type="password" 
-                  leftIcon={<Lock className="h-4 w-4" />} 
+                <Input
+                  label="New password"
+                  type="password"
+                  id="new-password"
+                  leftIcon={<Lock className="h-4 w-4" />}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   required
+                  disabled={isSubmitting}
                 />
-                <Input 
-                  label="Confirm new password" 
-                  type="password" 
-                  leftIcon={<Lock className="h-4 w-4" />} 
+                <Input
+                  label="Confirm new password"
+                  type="password"
+                  id="confirm-password"
+                  leftIcon={<Lock className="h-4 w-4" />}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
+                  disabled={isSubmitting}
                 />
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
                   <div className="font-semibold text-slate-700">Password requirements</div>
                   <ul className="mt-1.5 space-y-1 text-slate-500">
-                    <li>✓ At least 8 characters</li>
-                    <li>✓ One uppercase letter</li>
-                    <li>✓ One number or symbol</li>
+                    <li className={newPassword.length >= 8 ? "text-emerald-600" : ""}>✓ At least 8 characters</li>
+                    <li className={/[A-Z]/.test(newPassword) ? "text-emerald-600" : ""}>✓ One uppercase letter</li>
+                    <li className={/[0-9\W]/.test(newPassword) ? "text-emerald-600" : ""}>✓ One number or symbol</li>
                   </ul>
                 </div>
-                <Button type="submit" variant="gradient" size="lg" className="w-full" rightIcon={<ArrowRight className="h-4 w-4" />}>Update password</Button>
+                <Button
+                  type="submit"
+                  variant="gradient"
+                  size="lg"
+                  className="w-full"
+                  disabled={isSubmitting}
+                  rightIcon={isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                >
+                  {isSubmitting ? "Updating…" : "Update password"}
+                </Button>
               </div>
             </form>
           )}

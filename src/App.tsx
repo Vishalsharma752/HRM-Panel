@@ -15,8 +15,10 @@ import { Login } from "./pages/Login";
 import { Payroll } from "./pages/Payroll";
 import { Holidays } from "./pages/Holidays";
 import { AttendanceQueries } from "./pages/AttendanceQueries";
-import { Menu } from "lucide-react";
-import { initStorage, getCurrentUser, setCurrentUserSession, type SyncedEmployee } from "./data/store";
+import { AdminUsers } from "./pages/AdminUsers";
+import { Menu, Loader2 } from "lucide-react";
+import { initStorage, setCurrentUserSession } from "./data/store";
+import { useAuth } from "./hooks/useAuth";
 
 const titleMap: Record<Page, string> = {
   dashboard: "Dashboard",
@@ -32,6 +34,7 @@ const titleMap: Record<Page, string> = {
   payroll: "Payroll Management",
   holidays: "Holiday Calendar",
   queries: "Attendance Queries",
+  admin: "User Management",
 };
 
 export default function App() {
@@ -40,18 +43,32 @@ export default function App() {
     initStorage();
   }, []);
 
-  const [currentUser, setCurrentUser] = useState<SyncedEmployee | null>(() => getCurrentUser());
+  // ── Supabase Auth ──────────────────────────────────────────────────────────
+  const { currentUser, authLoading, authError, signIn, signOut, clearAuthError, updateCurrentUser } = useAuth();
+
   const [page, setPage] = useState<Page>("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Keep legacy sessionStorage in sync so other modules that read it still work
+  useEffect(() => {
+    setCurrentUserSession(currentUser);
+  }, [currentUser]);
+
   // If user role restricts a page, redirect to dashboard
   useEffect(() => {
-    if (currentUser && currentUser.role === "Employee") {
-      const adminPages: Page[] = ["employees", "departments", "hr", "reports"];
-      if (adminPages.includes(page)) {
-        setPage("dashboard");
+    if (currentUser) {
+      if (currentUser.role === "Employee") {
+        const adminPages: Page[] = ["employees", "departments", "hr", "reports", "admin"];
+        if (adminPages.includes(page)) {
+          setPage("dashboard");
+        }
+      } else if (currentUser.role === "Admin") {
+        const founderPages: Page[] = ["admin"];
+        if (founderPages.includes(page)) {
+          setPage("dashboard");
+        }
       }
     }
   }, [page, currentUser]);
@@ -64,55 +81,49 @@ export default function App() {
     }
   }, [search, page]);
 
-  // Synchronize currentUser status changes (e.g. deactivated by admin)
-  useEffect(() => {
-    if (!currentUser) return;
-    const handleSync = () => {
-      const storedEmps = localStorage.getItem("hrms_store_employees");
-      if (storedEmps) {
-        const emps: SyncedEmployee[] = JSON.parse(storedEmps);
-        const matched = emps.find(e => e.id === currentUser.id);
-        if (matched) {
-          if (matched.status === "Inactive") {
-            setCurrentUserSession(null);
-            setCurrentUser(null);
-            alert("Your account has been deactivated by the Administrator. Logging out.");
-          } else if (JSON.stringify(matched) !== JSON.stringify(currentUser)) {
-            setCurrentUserSession(matched);
-            setCurrentUser(matched);
-          }
-        }
-      }
-    };
-    window.addEventListener("storage", handleSync);
-    window.addEventListener("storage-sync", handleSync);
-    return () => {
-      window.removeEventListener("storage", handleSync);
-      window.removeEventListener("storage-sync", handleSync);
-    };
-  }, [currentUser]);
-
-  const handleLogin = (user: SyncedEmployee) => {
-    setCurrentUserSession(user);
-    setCurrentUser(user);
+  const handleLogout = async () => {
+    await signOut();
     setPage("dashboard");
   };
 
-  const handleLogout = () => {
-    setCurrentUserSession(null);
-    setCurrentUser(null);
-  };
+  // ── Auth Loading Screen ────────────────────────────────────────────────────
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <div className="text-center space-y-4">
+          <div className="flex h-16 w-16 mx-auto items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg">
+            <Loader2 className="h-8 w-8 animate-spin text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-slate-700">TIS Nexus HRM</p>
+            <p className="text-xs text-slate-400 mt-0.5">Checking authentication…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  if (!currentUser) return <Login onLogin={handleLogin} />;
+  // ── Unauthenticated: Show Login ────────────────────────────────────────────
+  if (!currentUser) {
+    return (
+      <Login
+        onSignIn={signIn}
+        authLoading={authLoading}
+        authError={authError}
+        clearAuthError={clearAuthError}
+      />
+    );
+  }
 
+  // ── Authenticated: Show App Shell ──────────────────────────────────────────
   return (
     <div className="flex min-h-screen bg-slate-50">
       {/* Desktop sidebar */}
-      <Sidebar 
-        page={page} 
-        onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }} 
-        collapsed={collapsed} 
-        onToggle={() => setCollapsed(c => !c)} 
+      <Sidebar
+        page={page}
+        onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
         user={currentUser}
         onLogout={handleLogout}
       />
@@ -122,38 +133,45 @@ export default function App() {
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-slate-900/50" onClick={() => setMobileNav(false)} />
           <div className="relative h-full w-72 bg-white shadow-2xl">
-            <Sidebar 
-              page={page} 
-              onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }} 
-              collapsed={false} 
-              onToggle={() => setMobileNav(false)} 
+            <Sidebar
+              page={page}
+              onNavigate={(p) => { setPage(p); setSearch(""); setMobileNav(false); }}
+              collapsed={false}
+              onToggle={() => setMobileNav(false)}
               user={currentUser}
               onLogout={handleLogout}
+              mobile={true}
             />
           </div>
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* Mobile top bar */}
         <div className="flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-2 lg:hidden">
-          <button onClick={() => setMobileNav(true)} className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100">
+          <button
+            onClick={() => setMobileNav(true)}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100"
+          >
             <Menu className="h-5 w-5" />
           </button>
           <div className="font-display text-sm font-extrabold text-slate-900">{titleMap[page]}</div>
         </div>
 
+        {/* Desktop top bar */}
         <div className="sticky top-0 z-30 hidden lg:block">
-          <Topbar 
-            title={titleMap[page]} 
-            onAdd={currentUser.role === "Admin" ? () => setPage("employees") : undefined} 
-            user={currentUser} 
-            onLogout={handleLogout} 
+          <Topbar
+            title={titleMap[page]}
+            onAdd={currentUser.role === "Admin" ? () => setPage("employees") : undefined}
+            user={currentUser}
+            onLogout={handleLogout}
             search={search}
             onSearchChange={setSearch}
             onNavigateNotifications={() => setPage("notifications")}
           />
         </div>
 
+        {/* Main content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
           {page === "dashboard" && <Dashboard onNavigate={setPage} currentUser={currentUser} />}
           {page === "employees" && <Employees search={search} setSearch={setSearch} />}
@@ -164,10 +182,19 @@ export default function App() {
           {page === "hr" && <HR />}
           {page === "reports" && <Reports />}
           {page === "notifications" && <NotificationsPage currentUser={currentUser} />}
-          {page === "settings" && <Settings currentUser={currentUser} onUpdateUser={(user) => { setCurrentUserSession(user); setCurrentUser(user); }} />}
+          {page === "settings" && (
+            <Settings
+              currentUser={currentUser}
+              onUpdateUser={(user) => {
+                setCurrentUserSession(user);
+                updateCurrentUser(user);
+              }}
+            />
+          )}
           {page === "payroll" && <Payroll currentUser={currentUser} search={search} setSearch={setSearch} />}
           {page === "holidays" && <Holidays currentUser={currentUser} />}
           {page === "queries" && <AttendanceQueries currentUser={currentUser} />}
+          {page === "admin" && <AdminUsers currentUser={currentUser} />}
         </main>
       </div>
     </div>

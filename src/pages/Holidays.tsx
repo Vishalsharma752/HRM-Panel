@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
 import {
-  ChevronLeft, ChevronRight, Plus, Trash2, Edit, X, Info, HelpCircle
+  ChevronLeft, ChevronRight, Plus, Trash2, X, Info, HelpCircle
 } from "lucide-react";
-import { PageHeader, Card, CardHeader, Button, Badge, Input, Select, Textarea, ConfirmModal } from "../components/ui";
+import { PageHeader, Card, Button, Badge, Input, Select, Textarea, ConfirmModal } from "../components/ui";
 import { useStore, SyncedEmployee, Holiday, ActivityRecord } from "../data/store";
+import { cn } from "../utils/cn";
 
 export function Holidays({ currentUser }: { currentUser: SyncedEmployee }) {
   const [holidays, setHolidays] = useStore<Holiday[]>("holidays", []);
@@ -357,12 +358,6 @@ export function Holidays({ currentUser }: { currentUser: SyncedEmployee }) {
     return diffDays;
   };
 
-  // Filter holidays for the active tab list (Yearly view)
-  const activeYearHolidays = useMemo(() => {
-    return holidays
-      .filter(h => new Date(h.date).getFullYear() === currentYear)
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [holidays, currentYear]);
 
   // Calendar cells generation
   const calendarCells = useMemo(() => {
@@ -394,6 +389,39 @@ export function Holidays({ currentUser }: { currentUser: SyncedEmployee }) {
 
     return cells;
   }, [currentYear, currentMonth, daysInMonth, startDayOfWeek, holidaysByDate]);
+
+  const monthsData = useMemo(() => {
+    const data = [];
+    for (let m = 0; m < 12; m++) {
+      const monthHolidays = holidays
+        .filter(h => {
+          const d = new Date(h.date);
+          return d.getFullYear() === currentYear && d.getMonth() === m;
+        })
+        .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      data.push({
+        index: m,
+        name: monthNames[m],
+        holidays: monthHolidays,
+      });
+    }
+    return data;
+  }, [holidays, currentYear]);
+
+  const monthHeaderColors = [
+    "bg-blue-600 text-white",
+    "bg-purple-600 text-white",
+    "bg-pink-600 text-white",
+    "bg-rose-600 text-white",
+    "bg-indigo-600 text-white",
+    "bg-sky-400 text-slate-900",
+    "bg-amber-400 text-slate-900",
+    "bg-amber-700 text-white",
+    "bg-slate-400 text-slate-900",
+    "bg-cyan-400 text-slate-900",
+    "bg-lime-400 text-slate-900",
+    "bg-orange-500 text-white"
+  ];
 
   return (
     <div className="space-y-6">
@@ -569,93 +597,80 @@ export function Holidays({ currentUser }: { currentUser: SyncedEmployee }) {
           </div>
         </Card>
       ) : (
-        <Card className="overflow-hidden">
-          <CardHeader
-            title={`Holidays in ${currentYear}`}
-            subtitle={`${activeYearHolidays.length} scheduled holidays`}
-          />
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-sm text-slate-600">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
-                  <th className="px-6 py-4">Date</th>
-                  <th className="px-6 py-4">Holiday Title</th>
-                  <th className="px-6 py-4">Type</th>
-                  <th className="px-6 py-4">Description</th>
-                  {isAdmin && <th className="px-6 py-4 text-right">Actions</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {activeYearHolidays.length === 0 ? (
-                  <tr>
-                    <td colSpan={isAdmin ? 5 : 4} className="px-6 py-12 text-center text-slate-500">
-                      No holidays added for this year yet.
-                    </td>
-                  </tr>
-                ) : (
-                  activeYearHolidays.map((h) => {
-                    const colors = holidayTypeColors[h.type] || holidayTypeColors.National;
-                    const dateObj = new Date(h.date);
-                    const formattedDate = dateObj.toLocaleDateString("en-IN", {
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric"
-                    });
-                    const remainingDays = getDaysRemaining(h.date);
+        <Card className="p-6">
+          {/* Header Banner matching mockup style */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-slate-100 pb-5 mb-6">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-rose-500 shadow-lg shadow-indigo-500/10 text-white font-black text-sm">
+                26
+              </div>
+              <span className="font-display text-lg font-black uppercase tracking-wider text-slate-900">
+                Holiday Calendar <span className="text-[#fb923c]">{currentYear}</span>
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="font-display text-sm font-black text-slate-900">
+                TIS <span className="text-rose-600">Nexus</span>
+              </span>
+              <span className="text-[9px] font-extrabold uppercase tracking-widest text-slate-400">
+                Pvt Ltd
+              </span>
+            </div>
+          </div>
 
-                    return (
-                      <tr key={h.id} className="hover:bg-slate-50/50">
-                        <td className="whitespace-nowrap px-6 py-4 font-semibold text-slate-900">
-                          {formattedDate}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-semibold text-slate-950">{h.title}</div>
-                          {remainingDays > 0 ? (
-                            <div className="text-[10px] font-bold text-indigo-600 mt-0.5">
-                              In {remainingDays} {remainingDays === 1 ? "day" : "days"}
+          {/* Month Columns Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+            {monthsData.map((m) => {
+              const headerColor = monthHeaderColors[m.index] || "bg-slate-900 text-white";
+              return (
+                <div key={m.index} className="flex flex-col rounded-xl border border-slate-200/80 bg-slate-50/20 overflow-hidden shadow-sm min-h-[220px]">
+                  <div className={cn("px-3 py-2 text-center text-xs font-extrabold uppercase tracking-wider", headerColor)}>
+                    {m.name}
+                  </div>
+
+                  <div className="flex-1 p-3 space-y-2">
+                    {m.holidays.length === 0 ? (
+                      <div className="flex h-full items-center justify-center text-center py-6">
+                        <span className="text-[11px] font-medium text-slate-400 italic">No Holidays</span>
+                      </div>
+                    ) : (
+                      m.holidays.map((h) => {
+                        const dateObj = new Date(h.date);
+                        const dayStr = dateObj.getDate();
+                        const monthShort = dateObj.toLocaleDateString("en-US", { month: "short" });
+                        const typeColors = holidayTypeColors[h.type] || holidayTypeColors.National;
+                        return (
+                          <div
+                            key={h.id}
+                            onClick={() => setSelectedHoliday(h)}
+                            className={cn(
+                              "group relative flex flex-col gap-1 rounded-lg border p-2 text-left cursor-pointer transition-all duration-200 hover:scale-[1.02]",
+                              typeColors.grid
+                            )}
+                          >
+                            <div className="text-[11px] font-extrabold leading-tight text-slate-900">
+                              {dayStr} {monthShort} - {h.title}
                             </div>
-                          ) : remainingDays === 0 ? (
-                            <div className="text-[10px] font-bold text-emerald-600 mt-0.5">
-                              Today 🎉
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="whitespace-nowrap px-6 py-4">
-                          <Badge variant="neutral" className={colors.badge}>
-                            {h.type}
-                          </Badge>
-                        </td>
-                        <td className="px-6 py-4 text-slate-500 max-w-xs truncate" title={h.description}>
-                          {h.description || "—"}
-                        </td>
-                        {isAdmin && (
-                          <td className="whitespace-nowrap px-6 py-4 text-right">
-                            <div className="flex justify-end gap-1.5">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-slate-500 hover:text-indigo-600"
-                                onClick={(e) => openEditModal(h, e)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 text-slate-400 hover:text-rose-600"
-                                onClick={(e) => handleDeleteHoliday(h.id, h.title, e)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+                            {h.description && (
+                              <div className="text-[9px] text-slate-500 truncate max-w-full leading-normal">
+                                {h.description}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-8 flex justify-center">
+            <div className="inline-flex items-center justify-center rounded-full bg-slate-900 px-6 py-2 text-xs font-extrabold text-white tracking-wide shadow-md">
+              Enjoy your Holidays!
+            </div>
           </div>
         </Card>
       )}

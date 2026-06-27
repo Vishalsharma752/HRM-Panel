@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { 
+  employees as initialEmployees,
   leaveRequests as initialLeaves, 
   attendanceToday as initialAttendance,
   notifications as initialNotifications,
@@ -8,8 +9,14 @@ import {
 } from "./employees";
 import { getTasksFromStorage } from "./tasksStore";
 import { getInitialPayrollData } from "./payrollStore";
+import { supabase } from "../components/supabase";
 
-export type Role = "Admin" | "Employee";
+export type Role = "Admin" | "Employee" | "Founder" | "Cofounder";
+
+/** Returns true if the role has admin-level access */
+export function isAdminRole(role: Role): boolean {
+  return role === "Admin" || role === "Founder" || role === "Cofounder";
+}
 
 export interface SyncedEmployee extends Omit<Employee, "role"> {
   role: Role;
@@ -114,24 +121,11 @@ export const initStorage = () => {
   if (typeof window === "undefined") return;
 
   // 1. Employees
-  const defaultEmployees: SyncedEmployee[] = [
-    {
-      id: "EMP-ADMIN",
-      empCode: "TISNX-ADMIN",
-      name: "System Admin",
-      email: "admin@tisnx.com",
-      phone: "+91 99999 99999",
-      avatar: "",
-      department: "Management",
-      designation: "Administrator",
-      role: "Admin",
-      status: "Active",
-      joinDate: new Date().toISOString().split("T")[0],
-      location: "Remote",
-      salary: 0,
-      password: "Password123!"
-    }
-  ];
+  const defaultEmployees: SyncedEmployee[] = initialEmployees.map(emp => ({
+    ...emp,
+    role: (emp.role === "Admin" || emp.role === "HR" || emp.role === "Manager") ? "Admin" : "Employee",
+    password: "Password123!"
+  }));
   const currentEmployees = getSafeParsed(`${STORE_PREFIX}employees`, defaultEmployees);
   localStorage.setItem(`${STORE_PREFIX}employees`, JSON.stringify(currentEmployees));
 
@@ -149,8 +143,8 @@ export const initStorage = () => {
   localStorage.setItem(`${STORE_PREFIX}attendance`, JSON.stringify(currentAttendance));
 
   // 5. Notifications
-  const currentNotifications = getSafeParsed(`${STORE_PREFIX}notifications`, initialNotifications);
-  localStorage.setItem(`${STORE_PREFIX}notifications`, JSON.stringify(currentNotifications));
+  const currentNotifications = getSafeParsed(`${STORE_PREFIX}notifications_v2`, initialNotifications);
+  localStorage.setItem(`${STORE_PREFIX}notifications_v2`, JSON.stringify(currentNotifications));
 
   // 6. Activities
   const currentActivities = getSafeParsed(`${STORE_PREFIX}activities`, initialActivities);
@@ -242,3 +236,91 @@ export const setCurrentUserSession = (user: SyncedEmployee | null) => {
     sessionStorage.removeItem(SESSION_USER_KEY);
   }
 };
+
+// Avatar generator helper
+function getAvatar(name: string, bg1: string, bg2: string): string {
+  const initials = name.split(" ").map((p: string) => p[0]).slice(0, 2).join("").toUpperCase();
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bg1}"/><stop offset="100%" stop-color="${bg2}"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${initials}</text></svg>`
+  )}`;
+}
+
+// Supabase fetch employee list and local storage sync hook
+// Returns [employees, loading, error, refetch]
+export function useSupabaseEmployees(): [SyncedEmployee[], boolean, string | null, () => Promise<void>] {
+  const [, setStoredEmployees] = useStore<SyncedEmployee[]>("employees", []);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchFromSupabase = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    console.log("[useSupabaseEmployees] Fetching employees from Supabase...");
+
+    try {
+      const { data, error: sbError } = await supabase
+        .from("employees")
+        .select("*")
+        .order("id", { ascending: true });
+
+      if (sbError) {
+        console.error("[useSupabaseEmployees] Fetch error:", sbError.message);
+        setError(sbError.message);
+        setLoading(false);
+        return;
+      }
+
+      console.log("[useSupabaseEmployees] Raw data from Supabase:", data);
+
+      if (!data || data.length === 0) {
+        console.log("[useSupabaseEmployees] No records found in Supabase.");
+        setLoading(false);
+        return;
+      }
+
+      const mapped: SyncedEmployee[] = data.map((row: any) => {
+        const padId = String(row.id).padStart(3, "0");
+        const name = row.full_name || row.name || "Unknown";
+        return {
+          id: `EMP-${padId}`,
+          empCode: row.emp_code || `TISNX-${padId}`,
+          name,
+          email: row.official_email || row.email || "",
+          phone: row.mobile || row.phone || "—",
+          avatar: getAvatar(name, "#6366f1", "#8b5cf6"),
+          department: row.department || "General",
+          designation: row.designation || (
+            (row.role === "Founder" || row.role === "founder") ? "Founder" :
+            (row.role === "Cofounder" || row.role === "cofounder" || row.role === "co-founder" || row.role === "Co-founder") ? "Co-founder" :
+            "Employee"
+          ),
+          role: (row.role === "Admin" || row.role === "admin") ? "Admin" :
+                (row.role === "Founder" || row.role === "founder") ? "Founder" :
+                (row.role === "Cofounder" || row.role === "cofounder" || row.role === "co-founder" || row.role === "Co-founder") ? "Cofounder" :
+                "Employee",
+          status: row.status || "Active",
+          joinDate: row.doj || row.joinDate || new Date().toISOString().split("T")[0],
+          location: row.location || "India",
+          manager: row.manager || undefined,
+          salary: row.salary || undefined,
+          password: row.password || "Password123!",
+        };
+      });
+
+      console.log("[useSupabaseEmployees] Mapped employees:", mapped.length, "records");
+      setStoredEmployees(mapped);
+      setLoading(false);
+    } catch (e: any) {
+      console.error("[useSupabaseEmployees] Exception:", e.message);
+      setError(e.message || "Unknown error");
+      setLoading(false);
+    }
+  }, [setStoredEmployees]);
+
+  useEffect(() => {
+    fetchFromSupabase();
+  }, [fetchFromSupabase]);
+
+  const [employees] = useStore<SyncedEmployee[]>("employees", []);
+  return [employees, loading, error, fetchFromSupabase];
+}

@@ -216,7 +216,7 @@ export function Topbar({
             </button>
 
             {openNotif && (
-              <div className="absolute right-0 top-12 z-40 w-[380px] origin-top-right overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/12 animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="absolute right-0 top-12 z-40 w-[380px] origin-top-right overflow-hidden rounded-xl border border-slate-200 bg-white shadow-md shadow-slate-900/10 animate-in fade-in slide-in-from-top-2 duration-150 transition-all">
 
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">

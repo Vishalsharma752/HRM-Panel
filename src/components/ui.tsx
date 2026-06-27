@@ -52,11 +52,11 @@ export function Button({
 }) {
   const sizes: Record<Size, string> = {
     sm: "h-8 px-3 text-xs gap-1.5 rounded-lg",
-    md: "h-10 px-4 text-sm gap-2 rounded-xl",
-    lg: "h-12 px-5 text-sm gap-2.5 rounded-xl",
+    md: "h-10 px-4 text-sm gap-2 rounded-lg",
+    lg: "h-12 px-5 text-sm gap-2.5 rounded-lg",
   };
   const variants: Record<Variant, string> = {
-    primary: "bg-rose-600 text-white hover:bg-rose-700 shadow-sm shadow-rose-600/20",
+    primary: "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-600/20",
     secondary: "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300 shadow-sm",
     ghost: "text-slate-600 hover:bg-slate-100",
     outline: "border border-indigo-200 text-indigo-700 hover:bg-indigo-50",
@@ -194,7 +194,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-2xl border border-slate-200/80 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_4px_16px_-8px_rgba(15,23,42,0.06)]",
+        "rounded-xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 hover:shadow-md",
         className
       )}
       {...rest}
@@ -255,14 +255,15 @@ export function Badge({
 }
 
 /* ----------------------------- Avatar ----------------------------- */
-export function Avatar({ src, name, size = 36, className }: { src?: string; name: string; size?: number; className?: string }) {
-  const initials = name.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
+export function Avatar({ src, name, size = 36, className }: { src?: string; name?: string; size?: number; className?: string }) {
+  const safeName = name || "Unknown";
+  const initials = safeName.split(" ").map(p => p[0]).slice(0, 2).join("").toUpperCase();
   const fontSize = Math.max(10, Math.round(size * 0.36));
   if (src) {
     return (
       <img
         src={src}
-        alt={name}
+        alt={safeName}
         style={{ width: size, height: size }}
         className={cn("rounded-full object-cover ring-2 ring-white shadow-sm", className)}
       />
@@ -502,7 +503,7 @@ export function ConfirmModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200" onClick={onCancel} />
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-md overflow-hidden rounded-xl bg-white p-6 shadow-md animate-in zoom-in-95 duration-200">
         <h3 className="font-display text-lg font-extrabold text-slate-900">{title}</h3>
         <p className="mt-2 text-sm text-slate-500 leading-normal">{message}</p>
         <div className="mt-6 flex items-center justify-end gap-3">

@@ -211,7 +211,7 @@ export function AttendanceQueries({
                     <tr
                       key={query.id}
                       onClick={() => openModal(query)}
-                      className="group cursor-pointer hover:bg-slate-50/60 transition-colors"
+                      className="group cursor-pointer transition-all duration-200 hover:bg-gray-50"
                     >
                       {/* Employee (admin only) */}
                       {isAdmin && (

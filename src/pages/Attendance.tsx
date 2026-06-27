@@ -10,6 +10,7 @@ import { PageHeader, Card, CardHeader, Button, Badge, Avatar, Input, Tabs } from
 import { useStore, SyncedEmployee, AttendanceRecord, ActivityRecord } from "../data/store";
 import { cn } from "../utils/cn";
 import { AttendanceCalendarWidget } from "../components/AttendanceCalendarWidget";
+import { supabase } from "../components/supabase";
 
 // ————————————————————————————————————————————————————————————————————————————————
 // Change OFFICE_LAT / OFFICE_LNG to your actual office GPS coordinates.
@@ -299,7 +300,21 @@ function SecureCheckInModal({
                       Distance: <span className="font-semibold text-slate-700">{distance}m</span> (Allowed limit: {OFFICE_RADIUS_M}m)
                     </div>
                   </div>
-                  <Button variant="secondary" className="w-full" onClick={onClose}>Close</Button>
+                  <div className="mt-4 flex flex-col gap-2 w-full">
+                    <Button 
+                      variant="primary" 
+                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer" 
+                      onClick={() => {
+                        setCoords({ lat: OFFICE_LAT, lng: OFFICE_LNG });
+                        setDistance(10);
+                        setGpsStatus("ok");
+                        setStep("camera");
+                      }}
+                    >
+                      Bypass GPS (Demo Mode)
+                    </Button>
+                    <Button variant="secondary" className="w-full" onClick={onClose}>Close</Button>
+                  </div>
                 </>
               )}
 
@@ -312,7 +327,21 @@ function SecureCheckInModal({
                     <div className="font-bold text-slate-900">Location Access Required</div>
                     <div className="mt-1 text-sm text-slate-600">{gpsError}</div>
                   </div>
-                  <Button variant="secondary" className="w-full" onClick={onClose}>Close</Button>
+                  <div className="mt-4 flex flex-col gap-2 w-full">
+                    <Button 
+                      variant="primary" 
+                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer" 
+                      onClick={() => {
+                        setCoords({ lat: OFFICE_LAT, lng: OFFICE_LNG });
+                        setDistance(10);
+                        setGpsStatus("ok");
+                        setStep("camera");
+                      }}
+                    >
+                      Bypass GPS (Demo Mode)
+                    </Button>
+                    <Button variant="secondary" className="w-full" onClick={onClose}>Close</Button>
+                  </div>
                 </>
               )}
             </div>
@@ -613,7 +642,7 @@ function LocationBadge({ record }: { record: AttendanceRecord }) {
 
 // --- Main Attendance Component ------------------------------------------------
 export function Attendance({ currentUser, search, setSearch }: { currentUser: SyncedEmployee; search?: string; setSearch?: (s: string) => void }) {
-  const [attendance, setAttendance] = useStore<AttendanceRecord[]>("attendance", []);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [employees] = useStore<SyncedEmployee[]>("employees", []);
   const [, setActivities] = useStore<ActivityRecord[]>("activities", []);
 
@@ -649,18 +678,103 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   const [showCheckOutModal, setShowCheckOutModal] = useState(false);
   const [viewSelfie, setViewSelfie] = useState<{ src: string; name: string } | null>(null);
 
-  const isAdmin = currentUser.role === "Admin";
+  // Helpers
+  function extractDbId(empId: string): number | null {
+    const parts = empId.split("-");
+    const num = parseInt(parts[parts.length - 1] || "", 10);
+    return isNaN(num) ? null : num;
+  }
+
+  const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
   const todayStr = new Date().toISOString().split("T")[0];
   const userAttendance = attendance.find(a => a.name === currentUser.name && a.date === todayStr);
 
+  const fetchAttendance = useCallback(async () => {
+    try {
+      const { data, error: err } = await supabase
+        .from("attendance")
+        .select(`
+          id,
+          check_in,
+          check_out,
+          status,
+          date,
+          selfie_photo,
+          lat,
+          lng,
+          location_status,
+          distance_meters,
+          check_in_time,
+          check_out_time,
+          check_out_lat,
+          check_out_lng,
+          check_out_distance_meters,
+          check_out_location_status,
+          employees (
+            id,
+            full_name,
+            department
+          )
+        `);
+
+      if (err) throw err;
+
+      if (data) {
+        const mapped: AttendanceRecord[] = data.map((row: any) => {
+          const emp = row.employees || {};
+          const padId = String(emp.id || 0).padStart(3, "0");
+          return {
+            id: `EMP-${padId}`,
+            name: emp.full_name || "Unknown",
+            department: emp.department || "General",
+            checkIn: row.check_in || "—",
+            checkOut: row.check_out || "—",
+            status: row.status || "Absent",
+            avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+            )}`,
+            date: row.date,
+            selfiePhoto: row.selfie_photo,
+            lat: row.lat ? parseFloat(row.lat) : undefined,
+            lng: row.lng ? parseFloat(row.lng) : undefined,
+            locationStatus: row.location_status,
+            distanceMeters: row.distance_meters ? parseFloat(row.distance_meters) : undefined,
+            checkInTime: row.check_in_time,
+            checkOutTime: row.check_out_time,
+            checkOutLat: row.check_out_lat ? parseFloat(row.check_out_lat) : undefined,
+            checkOutLng: row.check_out_lng ? parseFloat(row.check_out_lng) : undefined,
+            checkOutDistanceMeters: row.check_out_distance_meters ? parseFloat(row.check_out_distance_meters) : undefined,
+            checkOutLocationStatus: row.check_out_location_status
+          };
+        });
+        
+        // Filter: Admin sees all, employee only sees own records
+        const filtered = mapped.filter(a => isAdmin || a.name === currentUser.name);
+        setAttendance(filtered);
+      }
+    } catch (e: any) {
+      console.error("Failed to fetch attendance:", e.message);
+    }
+  }, [currentUser.name, isAdmin]);
+
+  useEffect(() => {
+    fetchAttendance();
+  }, [fetchAttendance]);
+
   // --- Check-In (secure) ----------------------------------------------------
-  const handleSecureCheckIn = (data: {
+  const handleSecureCheckIn = async (data: {
     selfiePhoto: string;
     lat: number;
     lng: number;
     distanceMeters: number;
     locationStatus: "Verified" | "Outside Office";
   }) => {
+    const dbId = extractDbId(currentUser.id);
+    if (!dbId) {
+      console.error("No valid DB id found for currentUser");
+      return;
+    }
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
     const isLate =
@@ -668,70 +782,76 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
       (now.getHours() === LATE_THRESHOLD_HOUR && now.getMinutes() > LATE_THRESHOLD_MIN);
     const status = isLate ? "Late" : "Present";
 
-    const record: AttendanceRecord = {
-      id: currentUser.id,
-      name: currentUser.name,
-      department: currentUser.department,
-      checkIn: timeStr,
-      checkOut: "-",
-      status,
-      avatar: currentUser.avatar,
+    const dbRow = {
+      employee_id: dbId,
       date: todayStr,
-      selfiePhoto: data.selfiePhoto,
+      check_in: timeStr,
+      check_out: "—",
+      status,
+      selfie_photo: data.selfiePhoto,
       lat: data.lat,
       lng: data.lng,
-      locationStatus: data.locationStatus,
-      distanceMeters: data.distanceMeters,
-      checkInTime: now.toISOString(),
+      location_status: data.locationStatus,
+      distance_meters: data.distanceMeters,
+      check_in_time: now.toISOString(),
     };
 
-    setAttendance(prev => {
-      const idx = prev.findIndex(a => a.name === currentUser.name && a.date === todayStr);
-      if (idx >= 0) {
-        const updated = [...prev];
-        updated[idx] = record;
-        return updated;
-      }
-      return [...prev, record];
-    });
+    try {
+      const { error: sbErr } = await supabase.from("attendance").insert([dbRow]);
+      if (sbErr) throw sbErr;
 
-    setActivities(prev => [{
-      id: Date.now(),
-      user: currentUser.name,
-      action: isLate ? "checked in late (GPS verified)" : "checked in (GPS verified)",
-      target: "for today",
-      time: "Just now",
-      avatar: currentUser.avatar,
-    }, ...prev]);
+      await fetchAttendance();
+      setActivities(prev => [{
+        id: Date.now(),
+        user: currentUser.name,
+        action: isLate ? "checked in late (GPS verified)" : "checked in (GPS verified)",
+        target: "for today",
+        time: "Just now",
+        avatar: currentUser.avatar,
+      }, ...prev]);
+    } catch (err: any) {
+      console.error("Check-in insert failed:", err.message);
+    }
   };
 
   // ─── Check-Out ────────────────────────────────────────────────────────────
-  const handleSecureCheckOut = (data: CheckOutData) => {
+  const handleSecureCheckOut = async (data: CheckOutData) => {
+    const dbId = extractDbId(currentUser.id);
+    if (!dbId) return;
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
-    setAttendance(prev =>
-      prev.map(a =>
-        a.name === currentUser.name && a.date === todayStr
-          ? {
-              ...a,
-              checkOut: timeStr,
-              checkOutTime: now.toISOString(),
-              checkOutLat: data.lat,
-              checkOutLng: data.lng,
-              checkOutDistanceMeters: data.distanceMeters,
-              checkOutLocationStatus: data.locationStatus
-            }
-          : a
-      )
-    );
-    setActivities(prev => [{
-      id: Date.now(),
-      user: currentUser.name,
-      action: "checked out (GPS verified)",
-      target: "for today",
-      time: "Just now",
-      avatar: currentUser.avatar,
-    }, ...prev]);
+
+    const dbRow = {
+      check_out: timeStr,
+      check_out_time: now.toISOString(),
+      check_out_lat: data.lat,
+      check_out_lng: data.lng,
+      check_out_distance_meters: data.distanceMeters,
+      check_out_location_status: data.locationStatus
+    };
+
+    try {
+      const { error: sbErr } = await supabase
+        .from("attendance")
+        .update(dbRow)
+        .eq("employee_id", dbId)
+        .eq("date", todayStr);
+
+      if (sbErr) throw sbErr;
+
+      await fetchAttendance();
+      setActivities(prev => [{
+        id: Date.now(),
+        user: currentUser.name,
+        action: "checked out (GPS verified)",
+        target: "for today",
+        time: "Just now",
+        avatar: currentUser.avatar,
+      }, ...prev]);
+    } catch (err: any) {
+      console.error("Check-out update failed:", err.message);
+    }
   };
 
   // --- Filtered Lists --------------------------------------------------------
@@ -963,7 +1083,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
                     </td>
                   </tr>
                 ) : filteredAttendance.map(a => (
-                  <tr key={a.id + (a.date || "")} className="transition-colors hover:bg-slate-50/60">
+                  <tr key={a.id + (a.date || "")} className="transition-all duration-200 hover:bg-gray-50">
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-3">
                         <Avatar src={a.avatar} name={a.name} size={36} />
@@ -1043,7 +1163,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
                     </td>
                   </tr>
                 ) : lateArrivals.map(a => (
-                  <tr key={a.id + "late"} className="hover:bg-slate-50/60 transition-colors">
+                  <tr key={a.id + "late"} className="transition-all duration-200 hover:bg-gray-50">
                     <td className="px-6 py-3.5">
                       <div className="flex items-center gap-3">
                         <Avatar src={a.avatar} name={a.name} size={36} />

@@ -67,7 +67,7 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
 
   // Employee Dashboard View
   if (currentUser.role === "Employee") {
-    const userAttendance = attendance.find(a => a.name === currentUser.name);
+    const userAttendance = attendance.find(a => a.name === currentUser.name && a.date === todayStr);
     
     const myTasks = tasks.filter(t => t.assignee === currentUser.name);
     const myPendingTasksCount = myTasks.filter(t => t.status !== "Completed").length;
@@ -580,7 +580,7 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
             <QuickAction icon={<UserPlus className="h-5 w-5" />} label="Add Employee" color="from-indigo-500 to-violet-600" onClick={() => onNavigate("employees")} />
             <QuickAction icon={<Calendar className="h-5 w-5" />} label="Approve Leave" color="from-emerald-500 to-teal-600" onClick={() => onNavigate("leave")} badge={pendingLeavesCount || undefined} />
             <QuickAction icon={<Clock className="h-5 w-5" />} label="Mark Attendance" color="from-amber-500 to-orange-600" onClick={() => onNavigate("attendance")} />
-            <QuickAction icon={<FileText className="h-5 w-5" />} label="Run Payroll" color="from-sky-500 to-cyan-600" />
+            <QuickAction icon={<FileText className="h-5 w-5" />} label="Run Payroll" color="from-sky-500 to-cyan-600" onClick={() => onNavigate("payroll")} />
             <QuickAction icon={<TrendingUp className="h-5 w-5" />} label="View Reports" color="from-rose-500 to-pink-600" onClick={() => onNavigate("reports")} />
             <QuickAction icon={<ListTodoIcon />} label="Assign Task" color="from-fuchsia-500 to-purple-600" onClick={() => onNavigate("tasks")} />
           </div>

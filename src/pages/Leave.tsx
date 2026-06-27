@@ -1,10 +1,11 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Calendar, Check, X, Download, Plus, Plane, Heart, Briefcase, Coffee,
   Clock, Users, Search, FileText,
 } from "lucide-react";
 import { PageHeader, Card, CardHeader, Button, Badge, Avatar, Input, Tabs, Textarea } from "../components/ui";
-import { useStore, SyncedEmployee, LeaveRequest, ActivityRecord, AttendanceRecord } from "../data/store";
+import { useStore, SyncedEmployee, LeaveRequest, ActivityRecord } from "../data/store";
+import { supabase } from "../components/supabase";
 
 const statusMeta: any = { Pending: "warning", Approved: "success", Rejected: "danger" };
 const typeMeta: any = {
@@ -15,10 +16,9 @@ const typeMeta: any = {
 };
 
 export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedEmployee; search?: string; setSearch?: (s: string) => void }) {
-  const [leaves, setLeaves] = useStore<LeaveRequest[]>("leaves", []);
-  const [employees, setEmployees] = useStore<SyncedEmployee[]>("employees", []);
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
+  const [employees] = useStore<SyncedEmployee[]>("employees", []);
   const [, setActivities] = useStore<ActivityRecord[]>("activities", []);
-  const [, setAttendance] = useStore<AttendanceRecord[]>("attendance", []);
 
   const [tab, setTab] = useState("pending");
   const [showApply, setShowApply] = useState(false);
@@ -49,46 +49,122 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
     return () => clearTimeout(handler);
   }, [inputValue, onSearchChange, searchVal]);
 
-  const isAdmin = currentUser.role === "Admin";
+  function extractDbId(empId: string): number | null {
+    const parts = empId.split("-");
+    const num = parseInt(parts[parts.length - 1] || "", 10);
+    return isNaN(num) ? null : num;
+  }
 
-  const handleApplyLeave = (newLeave: Omit<LeaveRequest, "id" | "employee" | "department" | "status" | "avatar">) => {
-    const id = `LV-${Math.floor(1000 + Math.random() * 9000)}`;
-    const fullLeave: LeaveRequest = {
-      ...newLeave,
-      id,
-      employee: currentUser.name,
-      department: currentUser.department,
-      status: "Pending",
-      avatar: currentUser.avatar
+  const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
+
+  const fetchLeaves = useCallback(async () => {
+    try {
+      const { data, error: sbErr } = await supabase
+        .from("leave_requests")
+        .select(`
+          id,
+          employee_id,
+          type,
+          from_date,
+          to_date,
+          days,
+          reason,
+          status,
+          created_at,
+          employees (
+            id,
+            full_name,
+            department
+          )
+        `)
+        .order("created_at", { ascending: false });
+
+      if (sbErr) throw sbErr;
+
+      if (data) {
+        const mapped: LeaveRequest[] = data.map((row: any) => {
+          const emp = row.employees || {};
+          return {
+            id: `LV-${row.id}`,
+            employee: emp.full_name || "Unknown",
+            department: emp.department || "General",
+            type: row.type || "Casual Leave",
+            from: row.from_date,
+            to: row.to_date,
+            days: row.days || 1,
+            reason: row.reason || "",
+            status: row.status || "Pending",
+            avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
+              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+            )}`
+          };
+        });
+
+        const filtered = mapped.filter(l => isAdmin || l.employee === currentUser.name);
+        setLeaves(filtered);
+      }
+    } catch (err: any) {
+      console.error("Failed to fetch leaves:", err.message);
+    }
+  }, [currentUser.name, isAdmin]);
+
+  useEffect(() => {
+    fetchLeaves();
+  }, [fetchLeaves]);
+
+  const handleApplyLeave = async (newLeave: Omit<LeaveRequest, "id" | "employee" | "department" | "status" | "avatar">) => {
+    const dbId = extractDbId(currentUser.id);
+    if (!dbId) {
+      console.error("Could not resolve current employee DB ID");
+      return;
+    }
+
+    const dbRow = {
+      employee_id: dbId,
+      type: newLeave.type,
+      from_date: newLeave.from,
+      to_date: newLeave.to,
+      days: newLeave.days,
+      reason: newLeave.reason,
+      status: "Pending"
     };
 
-    setLeaves(prev => [fullLeave, ...prev]);
+    try {
+      const { error: sbErr } = await supabase.from("leave_requests").insert([dbRow]);
+      if (sbErr) throw sbErr;
 
-    // Activity log
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: currentUser.name,
-      action: "applied for",
-      target: `${newLeave.type} (${newLeave.days} days)`,
-      time: "Just now",
-      avatar: currentUser.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
+      await fetchLeaves();
+
+      const activity: ActivityRecord = {
+        id: Date.now(),
+        user: currentUser.name,
+        action: "applied for",
+        target: `${newLeave.type} (${newLeave.days} days)`,
+        time: "Just now",
+        avatar: currentUser.avatar
+      };
+      setActivities(prev => [activity, ...prev]);
+    } catch (err: any) {
+      console.error("Failed to apply leave:", err.message);
+    }
   };
 
-  const handleApproveLeave = (leaveId: string) => {
-    let empName = "";
-    setLeaves(prev => prev.map(l => {
-      if (l.id === leaveId) {
-        empName = l.employee;
-        return { ...l, status: "Approved" as const };
-      }
-      return l;
-    }));
+  const handleApproveLeave = async (leaveId: string) => {
+    const rawId = parseInt(leaveId.split("-")[1], 10);
+    if (isNaN(rawId)) return;
 
-    // Find the leave request details to calculate date range
     const approvedLeave = leaves.find(l => l.id === leaveId);
-    if (approvedLeave) {
+    if (!approvedLeave) return;
+
+    try {
+      // 1. Update status in leave_requests
+      const { error: sbErr } = await supabase
+        .from("leave_requests")
+        .update({ status: "Approved" })
+        .eq("id", rawId);
+      if (sbErr) throw sbErr;
+
+      // 2. Generate date range and upsert to attendance table
       const dates: string[] = [];
       const start = new Date(approvedLeave.from);
       const end = new Date(approvedLeave.to);
@@ -101,72 +177,75 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
         temp.setDate(temp.getDate() + 1);
       }
 
-      // Add/update attendance record for each date in the approved leave range
-      setAttendance(prev => {
-        let updated = [...prev];
-        const matchedEmp = employees.find(e => e.name === approvedLeave.employee);
-        dates.forEach(dStr => {
-          const recIdx = updated.findIndex(a => a.name === approvedLeave.employee && a.date === dStr);
-          const newRec: AttendanceRecord = {
-            id: matchedEmp?.id || approvedLeave.id,
-            name: approvedLeave.employee,
-            department: approvedLeave.department,
-            checkIn: "-",
-            checkOut: "-",
-            status: "On Leave",
-            avatar: approvedLeave.avatar,
-            date: dStr
-          };
-          if (recIdx >= 0) {
-            updated[recIdx] = { ...updated[recIdx], status: "On Leave" };
-          } else {
-            updated.push(newRec);
-          }
-        });
-        return updated;
-      });
-    }
+      const matchedEmp = employees.find(e => e.name === approvedLeave.employee);
+      const dbEmpId = matchedEmp ? extractDbId(matchedEmp.id) : null;
+      if (dbEmpId) {
+        const upsertRows = dates.map(dStr => ({
+          employee_id: dbEmpId,
+          date: dStr,
+          check_in: "—",
+          check_out: "—",
+          status: "On Leave"
+        }));
+        const { error: upsertErr } = await supabase
+          .from("attendance")
+          .upsert(upsertRows, { onConflict: "employee_id, date" });
+        if (upsertErr) throw upsertErr;
 
-    // Update employee status to "On Leave"
-    setEmployees(prev => prev.map(e => {
-      if (e.name === empName) {
-        return { ...e, status: "On Leave" as const };
+        // 3. Update employee status to "On Leave"
+        const { error: empErr } = await supabase
+          .from("employees")
+          .update({ status: "On Leave" })
+          .eq("id", dbEmpId);
+        if (empErr) throw empErr;
       }
-      return e;
-    }));
 
-    // Activity log
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: currentUser.name,
-      action: "approved leave request for",
-      target: empName,
-      time: "Just now",
-      avatar: currentUser.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
+      await fetchLeaves();
+
+      // Activity log
+      const activity: ActivityRecord = {
+        id: Date.now(),
+        user: currentUser.name,
+        action: "approved leave request for",
+        target: approvedLeave.employee,
+        time: "Just now",
+        avatar: currentUser.avatar
+      };
+      setActivities(prev => [activity, ...prev]);
+    } catch (err: any) {
+      console.error("Failed to approve leave:", err.message);
+    }
   };
 
-  const handleRejectLeave = (leaveId: string) => {
-    let empName = "";
-    setLeaves(prev => prev.map(l => {
-      if (l.id === leaveId) {
-        empName = l.employee;
-        return { ...l, status: "Rejected" as const };
-      }
-      return l;
-    }));
+  const handleRejectLeave = async (leaveId: string) => {
+    const rawId = parseInt(leaveId.split("-")[1], 10);
+    if (isNaN(rawId)) return;
 
-    // Activity log
-    const activity: ActivityRecord = {
-      id: Date.now(),
-      user: currentUser.name,
-      action: "rejected leave request for",
-      target: empName,
-      time: "Just now",
-      avatar: currentUser.avatar
-    };
-    setActivities(prev => [activity, ...prev]);
+    const approvedLeave = leaves.find(l => l.id === leaveId);
+    if (!approvedLeave) return;
+
+    try {
+      const { error: sbErr } = await supabase
+        .from("leave_requests")
+        .update({ status: "Rejected" })
+        .eq("id", rawId);
+      if (sbErr) throw sbErr;
+
+      await fetchLeaves();
+
+      // Activity log
+      const activity: ActivityRecord = {
+        id: Date.now(),
+        user: currentUser.name,
+        action: "rejected leave request for",
+        target: approvedLeave.employee,
+        time: "Just now",
+        avatar: currentUser.avatar
+      };
+      setActivities(prev => [activity, ...prev]);
+    } catch (err: any) {
+      console.error("Failed to reject leave:", err.message);
+    }
   };
 
   // Filter requests
@@ -273,7 +352,7 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
               const tm = typeMeta[l.type] || typeMeta["Casual Leave"];
               const Icon = tm.icon;
               return (
-                <div key={l.id} className="group flex flex-col gap-3 p-5 transition-colors hover:bg-slate-50/50 sm:flex-row sm:items-center">
+                <div key={l.id} className="group flex flex-col gap-3 p-5 transition-all duration-200 hover:bg-gray-50 sm:flex-row sm:items-center">
                   <div className="flex flex-1 items-center gap-4">
                     <Avatar src={l.avatar} name={l.employee} size={44} />
                     <div className="min-w-0 flex-1">
