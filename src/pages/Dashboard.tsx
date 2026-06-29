@@ -36,6 +36,16 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
   const [activities, setActivities] = useStore<ActivityRecord[]>("activities", []);
   const [holidays] = useStore<Holiday[]>("holidays", []);
 
+  // ── Dynamic time-based greeting ──────────────────────────────────────────
+  const getGreeting = (): string => {
+    const hour = new Date().getHours();
+    if (hour >= 5  && hour < 12) return "Good Morning ☀️";
+    if (hour >= 12 && hour < 17) return "Good Afternoon 🌤️";
+    if (hour >= 17 && hour < 21) return "Good Evening 🌇";
+    return "Good Night 🌙";
+  };
+  const greeting = getGreeting();
+
   const todayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
   const upcomingHolidays = useMemo(() => {
     return holidays
@@ -147,7 +157,7 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
                 <span>Employee Portal · {currentUser.department}</span>
               </div>
               <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
-                Good morning, {currentUser.name.split(" ")[0]} 👋
+                {greeting}, {currentUser.name.split(" ")[0]} 👋
               </h1>
               <p className="mt-2 max-w-xl text-sm text-indigo-100/80 sm:text-base">
                 {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
@@ -336,7 +346,7 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
               <span>Welcome back, {currentUser.name} — here's your workplace today</span>
             </div>
             <h1 className="font-display text-3xl font-extrabold tracking-tight sm:text-4xl">
-              Good morning 👋
+              {greeting} 👋
             </h1>
             <p className="mt-2 max-w-xl text-sm text-indigo-100/80 sm:text-base">
               {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} · {totalEmployees} employees across {departmentCount} departments. You have <span className="font-semibold text-white">{pendingLeavesCount} pending leave requests</span> and <span className="font-semibold text-white">{pendingTasksCount} pending tasks</span> to track.
