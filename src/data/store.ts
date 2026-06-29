@@ -45,6 +45,7 @@ export function validatePassword(password: string): string | null {
 
 export interface LeaveRequest {
   id: string;
+  empCode?: string;
   employee: string;
   department: string;
   type: string;

@@ -49,15 +49,16 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
     return () => clearTimeout(handler);
   }, [inputValue, onSearchChange, searchVal]);
 
-  // Resolve employee DB integer id by email — reliable for both EMP- and AUTH- users
-  async function resolveEmployeeDbId(email: string): Promise<number | null> {
+  // Resolve employee record by email — returns {id, emp_code}
+  async function resolveEmployee(email: string): Promise<{ id: number; empCode: string } | null> {
     try {
       const { data } = await supabase
         .from("employees")
-        .select("id")
+        .select("id, emp_code")
         .ilike("official_email", email.trim())
         .maybeSingle();
-      return data?.id ? Number(data.id) : null;
+      if (!data) return null;
+      return { id: Number(data.id), empCode: data.emp_code || "" };
     } catch {
       return null;
     }
@@ -67,83 +68,118 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
 
   const fetchLeaves = useCallback(async () => {
     try {
-      // Step 1: Fetch leave_requests without join (avoids schema cache error)
+      // Fetch all columns — handles both old schema (leave_type/start_date/end_date)
+      // AND new schema (type/from_date/to_date/days/emp_code) gracefully
       const { data, error: sbErr } = await supabase
         .from("leave_requests")
-        .select("id, employee_id, type, from_date, to_date, days, reason, status, created_at")
+        .select("id, emp_code, employee_id, leave_type, start_date, end_date, type, from_date, to_date, days, reason, status, created_at")
         .order("created_at", { ascending: false });
 
       if (sbErr) throw sbErr;
       if (!data || data.length === 0) { setLeaves([]); return; }
 
-      // Step 2: Get unique employee_ids and batch fetch employee details
-      const empIds = [...new Set(data.map((r: any) => r.employee_id).filter(Boolean))];
-      let empMap: Record<number, { full_name: string; department: string }> = {};
+      // Collect all emp_codes from leave_requests to batch-fetch employee info
+      const empCodes = [...new Set(data.map((r: any) => r.emp_code).filter(Boolean))];
+      let empCodeMap: Record<string, { full_name: string; department: string }> = {};
 
-      if (empIds.length > 0) {
+      if (empCodes.length > 0) {
         const { data: empData } = await supabase
           .from("employees")
-          .select("id, full_name, department")
-          .in("id", empIds);
+          .select("emp_code, full_name, department")
+          .in("emp_code", empCodes);
         if (empData) {
           empData.forEach((e: any) => {
-            empMap[e.id] = { full_name: e.full_name || "Unknown", department: e.department || "General" };
+            empCodeMap[e.emp_code] = { full_name: e.full_name || "Unknown", department: e.department || "General" };
           });
         }
       }
 
-      // Step 3: Map rows with resolved employee info
       const mapped: LeaveRequest[] = data.map((row: any) => {
-        const emp = empMap[row.employee_id] || { full_name: "Unknown", department: "General" };
+        // Normalize column names — support both old and new schema
+        const leaveType = row.type || row.leave_type || "Casual Leave";
+        const fromDate = row.from_date || row.start_date || "";
+        const toDate = row.to_date || row.end_date || "";
+        const leaveDays = row.days || (
+          fromDate && toDate
+            ? Math.max(1, Math.ceil((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000) + 1)
+            : 1
+        );
+
+        // Resolve employee name — prefer emp_code lookup, fall back to Unknown
+        const empInfo = row.emp_code
+          ? empCodeMap[row.emp_code] || { full_name: row.emp_code, department: "General" }
+          : { full_name: "Unknown", department: "General" };
+
         return {
           id: `LV-${row.id}`,
-          employee: emp.full_name,
-          department: emp.department,
-          type: row.type || "Casual Leave",
-          from: row.from_date,
-          to: row.to_date,
-          days: row.days || 1,
+          empCode: row.emp_code || "",
+          employee: empInfo.full_name,
+          department: empInfo.department,
+          type: leaveType,
+          from: fromDate,
+          to: toDate,
+          days: leaveDays,
           reason: row.reason || "",
           status: row.status || "Pending",
           avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+            `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(empInfo.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
           )}`
         };
       });
 
-      const filtered = mapped.filter(l => isAdmin || l.employee === currentUser.name);
+      const filtered = mapped.filter(l => isAdmin || l.empCode === currentUser.empCode || l.employee === currentUser.name);
       setLeaves(filtered);
     } catch (err: any) {
       console.error("Failed to fetch leaves:", err.message);
     }
-  }, [currentUser.name, isAdmin]);
+  }, [currentUser.name, currentUser.empCode, isAdmin]);
 
   useEffect(() => {
     fetchLeaves();
   }, [fetchLeaves]);
 
   const handleApplyLeave = async (newLeave: Omit<LeaveRequest, "id" | "employee" | "department" | "status" | "avatar">) => {
-    // Resolve employee DB integer id by email — works for both EMP- and AUTH- users
-    const dbId = await resolveEmployeeDbId(currentUser.email);
-    if (!dbId) {
-      console.error("Could not resolve current employee DB ID for email:", currentUser.email);
+    // Resolve employee record by email
+    const empRecord = await resolveEmployee(currentUser.email);
+    const empCode = empRecord?.empCode || currentUser.empCode || null;
+
+    if (!empCode) {
+      console.error("Could not resolve emp_code for:", currentUser.email);
       alert("Could not find your employee record. Please contact admin.");
       return;
     }
 
-    const dbRow = {
-      employee_id: dbId,
+    // Insert with BOTH old and new column names so it works regardless of schema version
+    const dbRow: Record<string, any> = {
+      emp_code: empCode,
+      // New column names (added by migration)
       type: newLeave.type,
       from_date: newLeave.from,
       to_date: newLeave.to,
       days: newLeave.days,
+      // Old column names (original schema) — Supabase ignores extra columns gracefully
+      leave_type: newLeave.type,
+      start_date: newLeave.from,
+      end_date: newLeave.to,
       reason: newLeave.reason,
       status: "Pending"
     };
 
     try {
       const { error: sbErr } = await supabase.from("leave_requests").insert([dbRow]);
-      if (sbErr) throw sbErr;
+      if (sbErr) {
+        // If extra columns don't exist yet, retry with just the original schema columns
+        const fallbackRow = {
+          emp_code: empCode,
+          leave_type: newLeave.type,
+          start_date: newLeave.from,
+          end_date: newLeave.to,
+          reason: newLeave.reason,
+          status: "Pending"
+        };
+        const { error: fallbackErr } = await supabase.from("leave_requests").insert([fallbackRow]);
+        if (fallbackErr) throw fallbackErr;
+      }
 
       await fetchLeaves();
 
@@ -158,12 +194,14 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
       setActivities(prev => [activity, ...prev]);
     } catch (err: any) {
       console.error("Failed to apply leave:", err.message);
+      alert("Failed to submit leave request: " + err.message);
     }
   };
 
   const handleApproveLeave = async (leaveId: string) => {
-    const rawId = parseInt(leaveId.split("-")[1], 10);
-    if (isNaN(rawId)) return;
+    // id is "LV-{uuid}" — extract the UUID part
+    const rawId = leaveId.replace("LV-", "");
+    if (!rawId) return;
 
     const approvedLeave = leaves.find(l => l.id === leaveId);
     if (!approvedLeave) return;
@@ -258,8 +296,9 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
   };
 
   const handleRejectLeave = async (leaveId: string) => {
-    const rawId = parseInt(leaveId.split("-")[1], 10);
-    if (isNaN(rawId)) return;
+    // id is "LV-{uuid}" — extract the UUID part
+    const rawId = leaveId.replace("LV-", "");
+    if (!rawId) return;
 
     const approvedLeave = leaves.find(l => l.id === leaveId);
     if (!approvedLeave) return;
