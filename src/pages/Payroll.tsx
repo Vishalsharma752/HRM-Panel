@@ -544,8 +544,7 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
           employees (
             id,
             full_name,
-            department,
-            designation
+            department
           )
         `);
       if (structErr) throw structErr;
@@ -558,7 +557,7 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
             id,
             full_name,
             department,
-            designation
+            official_email
           )
         `);
       if (payrollErr) throw payrollErr;
@@ -600,6 +599,7 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
             id: row.id,
             empId: `EMP-${padId}`,
             empName: emp.full_name || "Unknown",
+            email: emp.official_email || "",
             department: emp.department || "General",
             designation: emp.designation || "Employee",
             avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -757,6 +757,34 @@ export function Payroll({ currentUser, search, setSearch }: { currentUser: Synce
         })
         .eq("id", id);
       if (sbErr) throw sbErr;
+
+      // Automatically send Payslip email notification to employee
+      const matchedRecord = records.find(r => r.id === id);
+      if (matchedRecord && matchedRecord.email) {
+        try {
+          const backendUrl = window.location.port === "5173"
+            ? "http://localhost:3000/api/auth/send-notification-email"
+            : "/api/auth/send-notification-email";
+          await fetch(backendUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: matchedRecord.email,
+              templateType: "Payroll",
+              data: {
+                name: matchedRecord.empName,
+                month: matchedRecord.monthLabel,
+                basicSalary: matchedRecord.basicSalary,
+                hra: matchedRecord.hra,
+                netSalary: matchedRecord.netSalary
+              }
+            })
+          });
+        } catch (mailErr) {
+          console.warn("[Payroll] Send notification email error:", mailErr);
+        }
+      }
+
       await fetchPayrollData();
     } catch (e: any) {
       console.error("handleMarkPaid failed:", e.message);

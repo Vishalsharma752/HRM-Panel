@@ -32,6 +32,7 @@ export interface PayrollRecord {
   id: string;
   empId: string;
   empName: string;
+  email?: string;
   department: string;
   designation: string;
   avatar?: string;

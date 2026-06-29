@@ -60,21 +60,18 @@ function mapRowToEmployee(row: any): SyncedEmployee {
     empCode: row.emp_code || `TISNX-${padId}`,
     name,
     email: (row.official_email || row.email || "").trim(),
-    phone: row.mobile || row.phone || "—",
+    phone: row.mobile || row.phone || "",
     avatar: buildAvatar(name),
     department: row.department || "General",
-    designation: row.designation || (
-      role === "Founder" ? "Founder" :
-      role === "Cofounder" ? "Co-founder" :
-      "Employee"
-    ),
+    designation: row.designation || "Employee",
     role,
     status: (row.status || "Active") as "Active" | "On Leave" | "Inactive" | "Probation",
     joinDate: row.doj || row.joinDate || new Date().toISOString().split("T")[0],
-    location: row.location || "India",
+    location: row.location || "",
     manager: row.manager || undefined,
     salary: row.salary || undefined,
     password: row.password || "Password123!",
+    user_id: row.user_id || undefined,
   };
 }
 
@@ -131,20 +128,7 @@ async function fetchEmployeeProfile(email: string): Promise<SyncedEmployee | nul
     }
     if (res1.error) console.warn("[useAuth] official_email lookup:", res1.error.message);
 
-    // Try email column as fallback
-    const res2 = await supabase
-      .from("employees")
-      .select("*")
-      .ilike("email", normalized)
-      .limit(1)
-      .maybeSingle();
-
-    if (res2.data) {
-      const emp = mapRowToEmployee(res2.data);
-      console.log("[useAuth] found employee (email):", emp.name, emp.role, emp.status);
-      return emp;
-    }
-    if (res2.error) console.warn("[useAuth] email column lookup:", res2.error.message);
+    // No email column lookup fallback necessary since 'official_email' is the column name in this table.
 
     console.log("[useAuth] no employee row found for:", normalized, "(non-fatal)");
     return null;
@@ -320,6 +304,11 @@ export function useAuth(): AuthState {
         password,
       });
 
+      console.log("DEBUG: email", normalizedEmail);
+      console.log("DEBUG: auth response", data);
+      console.log("DEBUG: auth error", signInError);
+      console.log("DEBUG: session", data?.session);
+
       console.log("[useAuth] signInWithPassword →", {
         error: signInError?.message ?? null,
         userId: data?.user?.id ?? null,
@@ -335,6 +324,19 @@ export function useAuth(): AuthState {
           setAuthError("This account has been deactivated. Contact Administrator.");
           await supabase.auth.signOut();
           return;
+        }
+
+        // Link employees.user_id to Supabase Auth UUID dynamically
+        if (profile) {
+          try {
+            await supabase
+              .from("employees")
+              .update({ user_id: data.user.id })
+              .eq("official_email", normalizedEmail);
+            profile.user_id = data.user.id;
+          } catch (updateErr) {
+            console.warn("[useAuth] Failed to link employee user_id:", updateErr);
+          }
         }
 
         // Use employee profile if available, otherwise use Auth user metadata

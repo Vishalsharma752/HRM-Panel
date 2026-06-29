@@ -13,6 +13,7 @@ export type Employee = {
   location: string;
   manager?: string;
   salary?: number;
+  user_id?: string;
 };
 
 export const departments = [

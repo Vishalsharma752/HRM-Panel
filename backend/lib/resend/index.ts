@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { getServiceClient } from "../supabase";
 
 const resendApiKey = process.env.RESEND_API_KEY;
 
@@ -8,11 +9,18 @@ export async function sendEmail({
   to,
   subject,
   html,
+  templateType = "Unknown",
 }: {
   to: string | string[];
   subject: string;
   html: string;
+  templateType?: string;
 }) {
+  const recipient = Array.isArray(to) ? to.join(", ") : to;
+  let status = "Sent";
+  let errorMessage: string | null = null;
+  let responseData: any = null;
+
   try {
     const response = await resend.emails.send({
       from: "HR Portal <onboarding@resend.dev>",
@@ -22,13 +30,34 @@ export async function sendEmail({
     });
     
     if (response.error) {
+      status = "Failed";
+      errorMessage = typeof response.error === "object" ? JSON.stringify(response.error) : String(response.error);
       console.error("Resend delivery failure:", response.error);
-      return { data: null, error: response.error };
+    } else {
+      responseData = response.data;
     }
-    
-    return { data: response.data, error: null };
   } catch (error: any) {
+    status = "Failed";
+    errorMessage = error.message || String(error);
     console.error("Error sending email via Resend:", error);
-    return { data: null, error };
   }
+
+  // Log to database using Service Role client to bypass RLS policies
+  try {
+    const supabase = getServiceClient();
+    await supabase.from("email_logs").insert([
+      {
+        to_email: recipient,
+        subject,
+        template_type: templateType,
+        status,
+        error_message: errorMessage,
+        sent_at: new Date().toISOString(),
+      }
+    ]);
+  } catch (logErr) {
+    console.error("Failed to write to email_logs table:", logErr);
+  }
+
+  return { data: responseData, error: errorMessage };
 }

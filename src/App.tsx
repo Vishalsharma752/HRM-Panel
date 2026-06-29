@@ -5,7 +5,10 @@ import { Dashboard } from "./pages/Dashboard";
 import { Login } from "./pages/Login";
 import { Menu, Loader2 } from "lucide-react";
 import { initStorage, setCurrentUserSession } from "./data/store";
-import { useAuth } from "./hooks/useAuth";
+import { useAuthContext } from "./contexts/AuthContext";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import { RoleGuard } from "./components/RoleGuard";
+
 
 // ── Lazy-loaded pages — each becomes a separate JS chunk ───────────────────────
 const Employees         = lazy(() => import("./pages/Employees").then(m => ({ default: m.Employees })));
@@ -21,6 +24,7 @@ const Payroll           = lazy(() => import("./pages/Payroll").then(m => ({ defa
 const Holidays          = lazy(() => import("./pages/Holidays").then(m => ({ default: m.Holidays })));
 const AttendanceQueries = lazy(() => import("./pages/AttendanceQueries").then(m => ({ default: m.AttendanceQueries })));
 const AdminUsers        = lazy(() => import("./pages/AdminUsers").then(m => ({ default: m.AdminUsers })));
+const EmailLogs         = lazy(() => import("./pages/EmailLogs").then(m => ({ default: m.EmailLogs })));
 
 // ── Page loading skeleton shown while lazy chunks download ────────────────────
 function PageSkeleton() {
@@ -68,7 +72,7 @@ export default function App() {
   }, []);
 
   // ── Supabase Auth ──────────────────────────────────────────────────────────
-  const { currentUser, authLoading, authError, signIn, signOut, clearAuthError, updateCurrentUser } = useAuth();
+  const { currentUser, authLoading, authError, signIn, signOut, clearAuthError, updateCurrentUser } = useAuthContext();
 
   const [page, setPage] = useState<Page>("dashboard");
   const [collapsed, setCollapsed] = useState(false);
@@ -80,22 +84,6 @@ export default function App() {
     setCurrentUserSession(currentUser);
   }, [currentUser]);
 
-  // If user role restricts a page, redirect to dashboard
-  useEffect(() => {
-    if (currentUser) {
-      if (currentUser.role === "Employee") {
-        const adminPages: Page[] = ["employees", "departments", "hr", "reports", "admin"];
-        if (adminPages.includes(page)) {
-          setPage("dashboard");
-        }
-      } else if (currentUser.role === "Admin") {
-        const founderPages: Page[] = ["admin"];
-        if (founderPages.includes(page)) {
-          setPage("dashboard");
-        }
-      }
-    }
-  }, [page, currentUser]);
 
   // Redirect to employees page when searching from a non-searchable page
   useEffect(() => {
@@ -216,25 +204,96 @@ export default function App() {
         {/* Main content — lazy chunks load on first navigation */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
           <Suspense fallback={<PageSkeleton />}>
-            {page === "dashboard"     && <Dashboard onNavigate={setPage} currentUser={currentUser} />}
-            {page === "employees"     && <Employees search={search} setSearch={setSearch} />}
-            {page === "attendance"    && <Attendance currentUser={currentUser} search={search} setSearch={setSearch} />}
-            {page === "leave"         && <Leave currentUser={currentUser} search={search} setSearch={setSearch} />}
-            {page === "departments"   && <Departments />}
-            {page === "tasks"         && <Tasks currentUser={currentUser} search={search} setSearch={setSearch} />}
-            {page === "hr"            && <HR />}
-            {page === "reports"       && <Reports />}
-            {page === "notifications" && <NotificationsPage currentUser={currentUser} />}
-            {page === "settings"      && (
-              <Settings
-                currentUser={currentUser}
-                onUpdateUser={handleUpdateUser}
-              />
+            {page === "dashboard"     && (
+              <ProtectedRoute>
+                <Dashboard onNavigate={setPage} currentUser={currentUser} />
+              </ProtectedRoute>
             )}
-            {page === "payroll"       && <Payroll currentUser={currentUser} search={search} setSearch={setSearch} />}
-            {page === "holidays"      && <Holidays currentUser={currentUser} />}
-            {page === "queries"       && <AttendanceQueries currentUser={currentUser} />}
-            {page === "admin"         && <AdminUsers currentUser={currentUser} />}
+            {page === "employees"     && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder", "Admin"]} onRedirect={handleNavigate}>
+                  <Employees search={search} setSearch={setSearch} />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
+            {page === "attendance"    && (
+              <ProtectedRoute>
+                <Attendance currentUser={currentUser} search={search} setSearch={setSearch} />
+              </ProtectedRoute>
+            )}
+            {page === "leave"         && (
+              <ProtectedRoute>
+                <Leave currentUser={currentUser} search={search} setSearch={setSearch} />
+              </ProtectedRoute>
+            )}
+            {page === "departments"   && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder", "Admin"]} onRedirect={handleNavigate}>
+                  <Departments />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
+            {page === "tasks"         && (
+              <ProtectedRoute>
+                <Tasks currentUser={currentUser} search={search} setSearch={setSearch} />
+              </ProtectedRoute>
+            )}
+            {page === "hr"            && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder", "Admin"]} onRedirect={handleNavigate}>
+                  <HR />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
+            {page === "reports"       && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder", "Admin"]} onRedirect={handleNavigate}>
+                  <Reports />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
+            {page === "notifications" && (
+              <ProtectedRoute>
+                <NotificationsPage currentUser={currentUser} />
+              </ProtectedRoute>
+            )}
+            {page === "settings"      && (
+              <ProtectedRoute>
+                <Settings
+                  currentUser={currentUser}
+                  onUpdateUser={handleUpdateUser}
+                />
+              </ProtectedRoute>
+            )}
+            {page === "payroll"       && (
+              <ProtectedRoute>
+                <Payroll currentUser={currentUser} search={search} setSearch={setSearch} />
+              </ProtectedRoute>
+            )}
+            {page === "holidays"      && (
+              <ProtectedRoute>
+                <Holidays currentUser={currentUser} />
+              </ProtectedRoute>
+            )}
+            {page === "queries"       && (
+              <ProtectedRoute>
+                <AttendanceQueries currentUser={currentUser} />
+              </ProtectedRoute>
+            )}
+            {page === "admin"         && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder"]} onRedirect={handleNavigate}>
+                  <AdminUsers currentUser={currentUser} />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
+            {page === "email-logs"    && (
+              <ProtectedRoute>
+                <RoleGuard allowedRoles={["Founder", "Cofounder"]} onRedirect={handleNavigate}>
+                  <EmailLogs />
+                </RoleGuard>
+              </ProtectedRoute>
+            )}
           </Suspense>
         </main>
       </div>

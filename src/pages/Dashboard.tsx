@@ -157,37 +157,6 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
                 <Button variant="secondary" size="md" className="bg-white/10 text-white border-white/15 hover:bg-white/20" onClick={() => onNavigate("tasks")} leftIcon={<Clock className="h-4 w-4" />}>View Tasks</Button>
               </div>
             </div>
-
-            {/* Live Clock / Attendance Widget */}
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur w-full md:w-80">
-              <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-3">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/60">Today's Attendance</span>
-                <Badge variant={userAttendance?.status === "Present" ? "success" : "neutral"} className="bg-emerald-500/20 text-emerald-300 border-none">
-                  {userAttendance?.status || "Not Checked In"}
-                </Badge>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4 text-center mb-4">
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-white/50">Check In</div>
-                  <div className="font-display text-lg font-bold mt-1">{userAttendance?.checkIn || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase font-bold text-white/50">Check Out</div>
-                  <div className="font-display text-lg font-bold mt-1">{userAttendance?.checkOut || "—"}</div>
-                </div>
-              </div>
-
-              {!userAttendance ? (
-                <Button variant="gradient" className="w-full text-xs" onClick={handleCheckIn}>Check In Today</Button>
-              ) : userAttendance.checkOut === "—" ? (
-                <Button variant="secondary" className="w-full text-xs bg-rose-600 hover:bg-rose-700 text-white border-none" onClick={handleCheckOut}>Check Out Today</Button>
-              ) : (
-                <div className="text-center py-2 text-xs font-bold text-white/70 bg-white/5 rounded-xl border border-white/10">
-                  Shift Completed 🎉
-                </div>
-              )}
-            </div>
           </div>
         </div>
 

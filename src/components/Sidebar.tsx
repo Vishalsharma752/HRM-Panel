@@ -1,7 +1,7 @@
 import { useMemo, memo } from "react";
 import {
   LayoutDashboard, Users, Clock, CalendarDays, Building2, ListTodo, UserCog, BarChart3,
-  Bell, Settings, ChevronRight, LogOut, IndianRupee, Calendar, MessageCircle, X, ShieldAlert
+  Bell, Settings, ChevronRight, LogOut, IndianRupee, Calendar, MessageCircle, X, ShieldAlert, Mail
 } from "lucide-react";
 import { BrandLogo, Avatar } from "./ui";
 import { cn } from "../utils/cn";
@@ -21,7 +21,8 @@ export type Page =
   | "payroll"
   | "holidays"
   | "queries"
-  | "admin";
+  | "admin"
+  | "email-logs";
 
 export const Sidebar = memo(function Sidebar({
   page,
@@ -99,17 +100,24 @@ export const Sidebar = memo(function Sidebar({
         label: "Administration",
         items: [
           { id: "admin" as Page, label: "User Management", icon: ShieldAlert },
+          { id: "email-logs" as Page, label: "Email Audit Logs", icon: Mail },
         ],
       },
     ];
 
     return dynamicNavGroups.map((group) => {
       const items = group.items.filter((item) => {
+        // Hide Employee Management (employees) menu for Employee role
+        if (item.id === "employees" && user.role === "Employee") return false;
+        
+        // Show Admin Panel (admin) and Email Logs (email-logs) menu only for Founder and Cofounder
+        if (item.id === "admin" && !(user.role === "Founder" || user.role === "Cofounder")) return false;
+        if (item.id === "email-logs" && !(user.role === "Founder" || user.role === "Cofounder")) return false;
+
         // Admin-only pages
-        const adminOnlyPages: Page[] = ["employees", "departments", "hr", "admin"];
+        const adminOnlyPages: Page[] = ["employees", "departments", "hr", "admin", "email-logs"];
         if (adminOnlyPages.includes(item.id) && !isAdminRole(user.role)) return false;
-        // Admin section only for founder/cofounder
-        if (item.id === "admin" && user.role === "Admin") return false; // only Founder/Cofounder
+        
         return true;
       });
       return { ...group, items };

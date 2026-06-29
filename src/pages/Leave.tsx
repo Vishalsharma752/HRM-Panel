@@ -49,60 +49,70 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
     return () => clearTimeout(handler);
   }, [inputValue, onSearchChange, searchVal]);
 
-  function extractDbId(empId: string): number | null {
-    const parts = empId.split("-");
-    const num = parseInt(parts[parts.length - 1] || "", 10);
-    return isNaN(num) ? null : num;
+  // Resolve employee DB integer id by email — reliable for both EMP- and AUTH- users
+  async function resolveEmployeeDbId(email: string): Promise<number | null> {
+    try {
+      const { data } = await supabase
+        .from("employees")
+        .select("id")
+        .ilike("official_email", email.trim())
+        .maybeSingle();
+      return data?.id ? Number(data.id) : null;
+    } catch {
+      return null;
+    }
   }
 
   const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
 
   const fetchLeaves = useCallback(async () => {
     try {
+      // Step 1: Fetch leave_requests without join (avoids schema cache error)
       const { data, error: sbErr } = await supabase
         .from("leave_requests")
-        .select(`
-          id,
-          employee_id,
-          type,
-          from_date,
-          to_date,
-          days,
-          reason,
-          status,
-          created_at,
-          employees (
-            id,
-            full_name,
-            department
-          )
-        `)
+        .select("id, employee_id, type, from_date, to_date, days, reason, status, created_at")
         .order("created_at", { ascending: false });
 
       if (sbErr) throw sbErr;
+      if (!data || data.length === 0) { setLeaves([]); return; }
 
-      if (data) {
-        const mapped: LeaveRequest[] = data.map((row: any) => {
-          const emp = row.employees || {};
-          return {
-            id: `LV-${row.id}`,
-            employee: emp.full_name || "Unknown",
-            department: emp.department || "General",
-            type: row.type || "Casual Leave",
-            from: row.from_date,
-            to: row.to_date,
-            days: row.days || 1,
-            reason: row.reason || "",
-            status: row.status || "Pending",
-            avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
-              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
-            )}`
-          };
-        });
+      // Step 2: Get unique employee_ids and batch fetch employee details
+      const empIds = [...new Set(data.map((r: any) => r.employee_id).filter(Boolean))];
+      let empMap: Record<number, { full_name: string; department: string }> = {};
 
-        const filtered = mapped.filter(l => isAdmin || l.employee === currentUser.name);
-        setLeaves(filtered);
+      if (empIds.length > 0) {
+        const { data: empData } = await supabase
+          .from("employees")
+          .select("id, full_name, department")
+          .in("id", empIds);
+        if (empData) {
+          empData.forEach((e: any) => {
+            empMap[e.id] = { full_name: e.full_name || "Unknown", department: e.department || "General" };
+          });
+        }
       }
+
+      // Step 3: Map rows with resolved employee info
+      const mapped: LeaveRequest[] = data.map((row: any) => {
+        const emp = empMap[row.employee_id] || { full_name: "Unknown", department: "General" };
+        return {
+          id: `LV-${row.id}`,
+          employee: emp.full_name,
+          department: emp.department,
+          type: row.type || "Casual Leave",
+          from: row.from_date,
+          to: row.to_date,
+          days: row.days || 1,
+          reason: row.reason || "",
+          status: row.status || "Pending",
+          avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+          )}`
+        };
+      });
+
+      const filtered = mapped.filter(l => isAdmin || l.employee === currentUser.name);
+      setLeaves(filtered);
     } catch (err: any) {
       console.error("Failed to fetch leaves:", err.message);
     }
@@ -113,9 +123,11 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
   }, [fetchLeaves]);
 
   const handleApplyLeave = async (newLeave: Omit<LeaveRequest, "id" | "employee" | "department" | "status" | "avatar">) => {
-    const dbId = extractDbId(currentUser.id);
+    // Resolve employee DB integer id by email — works for both EMP- and AUTH- users
+    const dbId = await resolveEmployeeDbId(currentUser.email);
     if (!dbId) {
-      console.error("Could not resolve current employee DB ID");
+      console.error("Could not resolve current employee DB ID for email:", currentUser.email);
+      alert("Could not find your employee record. Please contact admin.");
       return;
     }
 
@@ -178,19 +190,21 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
       }
 
       const matchedEmp = employees.find(e => e.name === approvedLeave.employee);
-      const dbEmpId = matchedEmp ? extractDbId(matchedEmp.id) : null;
-      if (dbEmpId) {
+      // Use emp_code (TEXT) for upsert — matches the attendance table's primary identifier
+      const empCode = matchedEmp?.empCode || null;
+      const dbEmpId = matchedEmp ? (await resolveEmployeeDbId(matchedEmp.email)) : null;
+      if (empCode) {
         const upsertRows = dates.map(dStr => ({
-          employee_id: dbEmpId,
-          date: dStr,
+          emp_code: empCode,
+          attendance_date: dStr,
           check_in: "—",
           check_out: "—",
           status: "On Leave"
         }));
         const { error: upsertErr } = await supabase
           .from("attendance")
-          .upsert(upsertRows, { onConflict: "employee_id, date" });
-        if (upsertErr) throw upsertErr;
+          .upsert(upsertRows, { onConflict: "emp_code,attendance_date" });
+        if (upsertErr) console.warn("[Leave] Attendance upsert error (non-fatal):", upsertErr.message);
 
         // 3. Update employee status to "On Leave"
         const { error: empErr } = await supabase
@@ -198,6 +212,32 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
           .update({ status: "On Leave" })
           .eq("id", dbEmpId);
         if (empErr) throw empErr;
+
+        // Trigger Approved Leave email notification via Resend
+        if (matchedEmp?.email) {
+          try {
+            const backendUrl = window.location.port === "5173"
+              ? "http://localhost:3000/api/auth/send-notification-email"
+              : "/api/auth/send-notification-email";
+            await fetch(backendUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: matchedEmp.email,
+                templateType: "LeaveApproved",
+                data: {
+                  name: approvedLeave.employee,
+                  fromDate: approvedLeave.from,
+                  toDate: approvedLeave.to,
+                  days: approvedLeave.days,
+                  reason: approvedLeave.reason
+                }
+              })
+            });
+          } catch (mailErr) {
+            console.warn("[Leave] Approve notification send error:", mailErr);
+          }
+        }
       }
 
       await fetchLeaves();
@@ -232,6 +272,33 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
       if (sbErr) throw sbErr;
 
       await fetchLeaves();
+
+      // Trigger Rejected Leave email notification via Resend
+      const matchedEmp = employees.find(e => e.name === approvedLeave.employee);
+      if (matchedEmp?.email) {
+        try {
+          const backendUrl = window.location.port === "5173"
+            ? "http://localhost:3000/api/auth/send-notification-email"
+            : "/api/auth/send-notification-email";
+          await fetch(backendUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: matchedEmp.email,
+              templateType: "LeaveRejected",
+              data: {
+                name: approvedLeave.employee,
+                fromDate: approvedLeave.from,
+                toDate: approvedLeave.to,
+                days: approvedLeave.days,
+                reason: approvedLeave.reason
+              }
+            })
+          });
+        } catch (mailErr) {
+          console.warn("[Leave] Reject notification send error:", mailErr);
+        }
+      }
 
       // Activity log
       const activity: ActivityRecord = {

@@ -1,100 +1,83 @@
 import { NextResponse } from "next/server";
-import { getServiceClient } from "../../../../lib/supabase";
-import { sendEmail } from "../../../../lib/resend";
+import { getServiceClient } from "../../../lib/supabase";
+import { sendEmail } from "../../../lib/resend";
 
 export async function GET(req: Request) {
   try {
-    // 1. Verify daily cron authorization token
-    const { searchParams } = new URL(req.url);
-    const paramKey = searchParams.get("key");
-    const authHeader = req.headers.get("Authorization");
-    const headerKey = authHeader ? authHeader.replace("Bearer ", "").trim() : "";
-    
-    const secretKey = process.env.CRON_SECRET || "tisnx_cron_secret_123";
-    if (paramKey !== secretKey && headerKey !== secretKey) {
-      return NextResponse.json({ error: "Unauthorized: Invalid cron signature" }, { status: 401 });
-    }
+    const supabase = getServiceClient();
 
-    const service = getServiceClient();
-
-    // 2. Fetch all active employees
-    const { data: employees, error: fetchErr } = await service
+    // 1. Fetch all active employees
+    const { data: employees, error } = await supabase
       .from("employees")
-      .select("id, full_name, official_email, dob")
+      .select("full_name, official_email, dob, status")
       .eq("status", "Active");
 
-    if (fetchErr) {
-      console.error("[Birthday Cron] Error fetching employees:", fetchErr.message);
-      return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+    if (error) {
+      console.error("Failed to query employees for birthday check:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     if (!employees || employees.length === 0) {
-      return NextResponse.json({ success: true, message: "No active employees to scan", matches: 0 });
+      return NextResponse.json({ message: "No active employees found." });
     }
 
-    // 3. Scan matching DOBs (Day and Month)
+    // 2. Identify whose birthday is today
     const today = new Date();
-    const todayMonth = today.getMonth() + 1; // 1-indexed month
+    const todayMonth = today.getMonth() + 1; // 1-indexed
     const todayDay = today.getDate();
 
-    const matches: any[] = [];
-
-    for (const emp of employees) {
-      if (!emp.dob) continue;
-      
+    const birthdayEmployees = employees.filter((emp) => {
+      if (!emp.dob) return false;
       const dobDate = new Date(emp.dob);
-      const dobMonth = dobDate.getMonth() + 1;
-      const dobDay = dobDate.getDate();
-      
-      if (dobMonth === todayMonth && dobDay === todayDay) {
-        matches.push(emp);
-      }
+      return (dobDate.getMonth() + 1) === todayMonth && dobDate.getDate() === todayDay;
+    });
+
+    if (birthdayEmployees.length === 0) {
+      return NextResponse.json({ message: "No birthdays today." });
     }
 
-    if (matches.length === 0) {
-      return NextResponse.json({ success: true, message: "No birthdays today", matches: 0 });
-    }
-
-    // 4. Send emails automatically via Resend
     let sentCount = 0;
-    for (const match of matches) {
-      const emailHtml = `
-        <div style="font-family: sans-serif; text-align: center; padding: 32px; color: #333; line-height: 1.6; max-width: 500px; border: 1px solid #e5e7eb; border-radius: 16px; margin: 0 auto; background-color: #faf5ff;">
-          <h1 style="color: #8b5cf6; margin-top: 0; font-size: 24px;">Happy Birthday, ${match.full_name}! 🎂 🎉</h1>
-          <p style="font-size: 16px; color: #4b5563;">
-            Wishing you a wonderful day filled with joy, laughter, and celebration!
+    let failedCount = 0;
+
+    // 3. Send Happy Birthday email for each birthday employee
+    for (const emp of birthdayEmployees) {
+      const subject = `Happy Birthday, ${emp.full_name}! 🎂`;
+      const htmlContent = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #fbcfe8; border-radius: 12px; background-color: #fffafb; text-align: center;">
+          <h1 style="color: #db2777; margin: 0; font-size: 28px;">Happy Birthday, ${emp.full_name}! 🎉</h1>
+          <p style="color: #475569; font-size: 16px; line-height: 1.6; margin-top: 20px;">
+            Wishing you a wonderful day filled with celebration, joy, and success! We are incredibly grateful to have you on the team.
           </p>
-          <div style="font-size: 60px; margin: 24px 0;">🎈 🎁 🍰</div>
-          <p style="font-size: 14px; color: #6b7280; font-style: italic; margin-bottom: 24px;">
-            "Wishing you a year ahead full of success, good health, and happiness. Thank you for being an amazing part of our team!"
-          </p>
-          <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-          <p style="font-size: 12px; color: #9ca3af; margin-bottom: 0;">Warm wishes from all of us at TIS Nexus.</p>
+          <div style="font-size: 60px; margin: 24px 0;">🎂🎁🎈</div>
+          <p style="color: #64748b; font-size: 14px; margin-top: 24px;">Enjoy your special day!</p>
+          <div style="margin-top: 32px; border-top: 1px solid #fbcfe8; padding-top: 16px;">
+            <p style="font-size: 11px; color: #94a3b8; margin: 0;">TIS Nexus HRM Portal &bull; Celebrations Service</p>
+          </div>
         </div>
       `;
 
-      const { error: emailErr } = await sendEmail({
-        to: match.official_email,
-        subject: `Happy Birthday, ${match.full_name}! 🎂`,
-        html: emailHtml
+      const res = await sendEmail({
+        to: emp.official_email,
+        subject,
+        html: htmlContent,
+        templateType: "Birthday",
       });
 
-      if (!emailErr) {
-        sentCount++;
+      if (res.error) {
+        failedCount++;
       } else {
-        console.warn(`[Birthday Cron] Email failed for ${match.full_name}:`, emailErr);
+        sentCount++;
       }
     }
 
     return NextResponse.json({
-      success: true,
-      message: `Successfully processed birthdays. Matches: ${matches.length}, Emails Sent: ${sentCount}`,
-      recipients: matches.map(m => m.full_name)
+      message: "Birthday cron check executed successfully.",
+      birthdaysToday: birthdayEmployees.length,
+      emailsSent: sentCount,
+      emailsFailed: failedCount
     });
-  } catch (error: any) {
-    console.error("[Birthday Cron] Server Exception:", error.message);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  } catch (err: any) {
+    console.error("Birthday cron error:", err);
+    return NextResponse.json({ error: err.message || "An unexpected error occurred" }, { status: 500 });
   }
 }
-
-export async function POST(req: Request) { return GET(req); }

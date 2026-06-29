@@ -282,7 +282,7 @@ export function useSupabaseEmployees(): [SyncedEmployee[], boolean, string | nul
     try {
       const { data, error: sbError } = await supabase
         .from("employees")
-        .select("id, emp_code, full_name, official_email, mobile, department, role, status, doj, designation, dob, blood_group, location, salary")
+        .select("id, user_id, emp_code, full_name, official_email, mobile, department, designation, role, status, doj, dob, blood_group, location, salary, password")
         .order("id", { ascending: true })
         .limit(500);
 
@@ -305,24 +305,21 @@ export function useSupabaseEmployees(): [SyncedEmployee[], boolean, string | nul
           empCode: row.emp_code || `TISNX-${padId}`,
           name,
           email: row.official_email || row.email || "",
-          phone: row.mobile || row.phone || "—",
+          phone: row.mobile || row.phone || "",
           avatar: getAvatar(name, "#6366f1", "#8b5cf6"),
           department: row.department || "General",
-          designation: row.designation || (
-            (row.role === "Founder" || row.role === "founder") ? "Founder" :
-            (row.role === "Cofounder" || row.role === "cofounder" || row.role === "co-founder" || row.role === "Co-founder") ? "Co-founder" :
-            "Employee"
-          ),
+          designation: row.designation || "Employee",
           role: (row.role === "Admin" || row.role === "admin") ? "Admin" :
                 (row.role === "Founder" || row.role === "founder") ? "Founder" :
                 (row.role === "Cofounder" || row.role === "cofounder" || row.role === "co-founder" || row.role === "Co-founder") ? "Cofounder" :
                 "Employee",
           status: row.status || "Active",
           joinDate: row.doj || row.joinDate || new Date().toISOString().split("T")[0],
-          location: row.location || "India",
+          location: row.location || "",
           manager: row.manager || undefined,
           salary: row.salary || undefined,
           password: row.password || "Password123!",
+          user_id: row.user_id || undefined,
         };
       });
 

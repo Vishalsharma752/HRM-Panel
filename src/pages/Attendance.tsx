@@ -40,6 +40,20 @@ function formatWorkHours(inISO?: string, outISO?: string): string {
   return `${h}h ${m}m`;
 }
 
+// FIX 1: Local date helper — always use this, never toISOString() for dates
+function getLocalDateString(d: Date = new Date()): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// FIX 2: Normalize checkout value — handle both dash variants
+function isCheckedOut(val?: string): boolean {
+  if (!val) return false;
+  return val !== "-" && val !== "—" && val.trim() !== "";
+}
+
 const monthlyData = [
   { day: "01", present: 18, absent: 1, leave: 3, wfh: 2 },
   { day: "02", present: 20, absent: 0, leave: 3, wfh: 1 },
@@ -301,9 +315,9 @@ function SecureCheckInModal({
                     </div>
                   </div>
                   <div className="mt-4 flex flex-col gap-2 w-full">
-                    <Button 
-                      variant="primary" 
-                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer" 
+                    <Button
+                      variant="primary"
+                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer"
                       onClick={() => {
                         setCoords({ lat: OFFICE_LAT, lng: OFFICE_LNG });
                         setDistance(10);
@@ -328,9 +342,9 @@ function SecureCheckInModal({
                     <div className="mt-1 text-sm text-slate-600">{gpsError}</div>
                   </div>
                   <div className="mt-4 flex flex-col gap-2 w-full">
-                    <Button 
-                      variant="primary" 
-                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer" 
+                    <Button
+                      variant="primary"
+                      className="w-full bg-amber-600 hover:bg-amber-700 border-none text-white cursor-pointer"
                       onClick={() => {
                         setCoords({ lat: OFFICE_LAT, lng: OFFICE_LNG });
                         setDistance(10);
@@ -646,23 +660,30 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   const [employees] = useStore<SyncedEmployee[]>("employees", []);
   const [, setActivities] = useStore<ActivityRecord[]>("activities", []);
 
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showToast = useCallback((message: string, type: "success" | "error") => {
+    setToast({ message, type });
+  }, []);
+
   const [tab, setTab] = useState("today");
   const [localSearch, setLocalSearch] = useState("");
   const searchVal = search !== undefined ? search : localSearch;
   const onSearchChange = setSearch !== undefined ? setSearch : setLocalSearch;
 
-  // Immediate input state
   const [inputValue, setInputValue] = useState(searchVal);
-
-  // Debounced search state used for actual list filtering
   const [debouncedSearch, setDebouncedSearch] = useState(searchVal);
 
-  // Sync input value with searchVal from parent/navigation
   useEffect(() => {
     setInputValue(searchVal);
   }, [searchVal]);
 
-  // Debounce the state update of both the internal filter and the parent state
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(inputValue);
@@ -670,7 +691,6 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
         onSearchChange(inputValue);
       }
     }, 300);
-
     return () => clearTimeout(handler);
   }, [inputValue, onSearchChange, searchVal]);
 
@@ -678,89 +698,71 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   const [showCheckOutModal, setShowCheckOutModal] = useState(false);
   const [viewSelfie, setViewSelfie] = useState<{ src: string; name: string } | null>(null);
 
-  // Helpers
-  function extractDbId(empId: string): number | null {
-    const parts = empId.split("-");
-    const num = parseInt(parts[parts.length - 1] || "", 10);
-    return isNaN(num) ? null : num;
-  }
-
   const isAdmin = currentUser.role === "Admin" || currentUser.role === "Founder" || currentUser.role === "Cofounder";
   const isFounderOrCofounder = ["Founder", "Cofounder"].includes(currentUser.role);
-  const todayStr = new Date().toISOString().split("T")[0];
-  const userAttendance = attendance.find(a => a.name === currentUser.name && a.date === todayStr);
+
+  // FIX 1: Always use local date, never toISOString() — already defined above as module-level util
+  const todayStr = getLocalDateString();
+
+  // FIX 3: Match by user_id (UUID) not name — most reliable
+  const userAttendance = attendance.find(a => a.date === todayStr && a.name.trim() === currentUser.name.trim());
 
   const fetchAttendance = useCallback(async () => {
     try {
       const { data, error: err } = await supabase
         .from("attendance")
-        .select(`
-          id,
-          check_in,
-          check_out,
-          status,
-          date,
-          selfie_photo,
-          lat,
-          lng,
-          location_status,
-          distance_meters,
-          check_in_time,
-          check_out_time,
-          check_out_lat,
-          check_out_lng,
-          check_out_distance_meters,
-          check_out_location_status,
-          employees (
-            id,
-            full_name,
-            department
-          )
-        `);
+        .select("id, emp_code, attendance_date, check_in, check_out, status")
+        .gte("attendance_date", getLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+        .lte("attendance_date", getLocalDateString());
 
       if (err) throw err;
 
       if (data) {
         const mapped: AttendanceRecord[] = data.map((row: any) => {
-          const emp = row.employees || {};
-          const padId = String(emp.id || 0).padStart(3, "0");
+          // Match by emp_code (TEXT) — simple and reliable
+          const matchedEmp = employees.find(e =>
+            e.empCode === row.emp_code
+          );
+          const empName = matchedEmp ? matchedEmp.name : (row.emp_code || "Unknown");
+          const empDept = matchedEmp ? (matchedEmp as any).department || "General" : "General";
+          const rawId = matchedEmp ? matchedEmp.id.replace("EMP-", "") : "000";
+          const padId = String(rawId).padStart(3, "0");
+
+          const rawCheckOut = row.check_out;
+          const normalizedCheckOut = (!rawCheckOut || rawCheckOut === "—" || rawCheckOut.trim() === "") ? "-" : rawCheckOut;
+
           return {
-            id: `EMP-${padId}`,
-            name: emp.full_name || "Unknown",
-            department: emp.department || "General",
-            checkIn: row.check_in || "—",
-            checkOut: row.check_out || "—",
-            status: row.status || "Absent",
+            id: row.id,
+            empId: `EMP-${padId}`,
+            name: empName.trim(),
+            department: empDept,
+            checkIn: row.check_in || "-",
+            checkOut: normalizedCheckOut,
+            status: (row.status || "Present") as AttendanceRecord["status"],
             avatar: `data:image/svg+xml;utf8,${encodeURIComponent(
-              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(emp.full_name || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
+              `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(empName || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
             )}`,
-            date: row.date,
-            selfiePhoto: row.selfie_photo,
-            lat: row.lat ? parseFloat(row.lat) : undefined,
-            lng: row.lng ? parseFloat(row.lng) : undefined,
-            locationStatus: row.location_status,
-            distanceMeters: row.distance_meters ? parseFloat(row.distance_meters) : undefined,
-            checkInTime: row.check_in_time,
-            checkOutTime: row.check_out_time,
-            checkOutLat: row.check_out_lat ? parseFloat(row.check_out_lat) : undefined,
-            checkOutLng: row.check_out_lng ? parseFloat(row.check_out_lng) : undefined,
-            checkOutDistanceMeters: row.check_out_distance_meters ? parseFloat(row.check_out_distance_meters) : undefined,
-            checkOutLocationStatus: row.check_out_location_status
+            date: row.attendance_date,
+            checkInTime: row.attendance_date && row.check_in ? `${row.attendance_date}T${row.check_in}` : undefined,
+            checkOutTime: (row.attendance_date && normalizedCheckOut && normalizedCheckOut !== "-") ? `${row.attendance_date}T${normalizedCheckOut}` : undefined,
           };
         });
-        
-        // Filter: Admin sees all, employee only sees own records
-        const filtered = mapped.filter(a => isAdmin || a.name === currentUser.name);
+
+        const filtered = mapped.filter(a => isAdmin || a.name === currentUser.name.trim());
         setAttendance(filtered);
       }
     } catch (e: any) {
       console.error("Failed to fetch attendance:", e.message);
     }
-  }, [currentUser.name, isAdmin]);
+  }, [employees, currentUser.name, isAdmin]);
 
+
+  // FIX 4: Only fetch after employees are loaded — prevents "Unknown" name mismatch
   useEffect(() => {
-    fetchAttendance();
-  }, [fetchAttendance]);
+    if (employees.length > 0) {
+      fetchAttendance();
+    }
+  }, [fetchAttendance, employees]);
 
   // --- Check-In (secure) ----------------------------------------------------
   const handleSecureCheckIn = async (data: {
@@ -771,79 +773,146 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
     locationStatus: "Verified" | "Outside Office";
   }) => {
     if (isFounderOrCofounder) return;
-    const dbId = extractDbId(currentUser.id);
-    if (!dbId) {
-      console.error("No valid DB id found for currentUser");
+
+    // ── Use emp_code (TEXT) — no UUID needed ──────────────────────────────
+    // Get emp_code from employees table using the logged-in user's email
+    let empCode: string | null = null;
+
+    try {
+      const { data: empRow } = await supabase
+        .from("employees")
+        .select("emp_code")
+        .eq("official_email", currentUser.email)
+        .maybeSingle();
+      if (empRow?.emp_code) {
+        empCode = empRow.emp_code;
+        console.log("[CheckIn] emp_code from DB:", empCode);
+      }
+    } catch (e: any) {
+      console.warn("[CheckIn] emp_code lookup failed:", e.message);
+    }
+
+    // Fallback: use currentUser.empCode from local state
+    if (!empCode) {
+      empCode = currentUser.empCode || null;
+      console.log("[CheckIn] emp_code from currentUser:", empCode);
+    }
+
+    if (!empCode) {
+      showToast("Could not identify your employee code. Contact admin.", "error");
       return;
     }
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
-    const isLate =
-      now.getHours() > LATE_THRESHOLD_HOUR ||
-      (now.getHours() === LATE_THRESHOLD_HOUR && now.getMinutes() > LATE_THRESHOLD_MIN);
-    const status = isLate ? "Late" : "Present";
-
-    const dbRow = {
-      employee_id: dbId,
-      date: todayStr,
-      check_in: timeStr,
-      check_out: "—",
-      status,
-      selfie_photo: data.selfiePhoto,
-      lat: data.lat,
-      lng: data.lng,
-      location_status: data.locationStatus,
-      distance_meters: data.distanceMeters,
-      check_in_time: now.toISOString(),
-    };
+    const today = getLocalDateString();
+    const timeFormatted = new Date().toLocaleTimeString("en-GB");
+    console.log("[CheckIn] emp_code:", empCode, "date:", today, "time:", timeFormatted);
 
     try {
-      const { error: sbErr } = await supabase.from("attendance").insert([dbRow]);
-      if (sbErr) throw sbErr;
+      // Check if already checked in today using emp_code
+      const { data: existing, error: existErr } = await supabase
+        .from("attendance")
+        .select("id")
+        .eq("emp_code", empCode)
+        .eq("attendance_date", today)
+        .maybeSingle();
 
+      if (existErr) throw existErr;
+
+      let resultErr: any = null;
+
+      if (existing) {
+        // Already exists — update check_in time
+        const { error: resErr } = await supabase
+          .from("attendance")
+          .update({ check_in: timeFormatted })
+          .eq("id", existing.id);
+        resultErr = resErr;
+      } else {
+        // New record for today
+        const { error: resErr } = await supabase
+          .from("attendance")
+          .insert([{
+            emp_code: empCode,
+            attendance_date: today,
+            check_in: timeFormatted,
+            check_out: "—",
+            status: "Present",
+          }]);
+        resultErr = resErr;
+      }
+
+      if (resultErr) throw resultErr;
+
+      showToast("Checked in successfully!", "success");
+      window.dispatchEvent(new Event("storage-sync"));
       await fetchAttendance();
+
       setActivities(prev => [{
         id: Date.now(),
         user: currentUser.name,
-        action: isLate ? "checked in late (GPS verified)" : "checked in (GPS verified)",
+        action: "checked in (GPS verified)",
         target: "for today",
         time: "Just now",
         avatar: currentUser.avatar,
       }, ...prev]);
     } catch (err: any) {
-      console.error("Check-in insert failed:", err.message);
+      console.error("Check-in failed:", err.message);
+      showToast("Check-in failed: " + err.message, "error");
     }
   };
 
   // ─── Check-Out ────────────────────────────────────────────────────────────
   const handleSecureCheckOut = async (data: CheckOutData) => {
     if (isFounderOrCofounder) return;
-    const dbId = extractDbId(currentUser.id);
-    if (!dbId) return;
 
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
-
-    const dbRow = {
-      check_out: timeStr,
-      check_out_time: now.toISOString(),
-      check_out_lat: data.lat,
-      check_out_lng: data.lng,
-      check_out_distance_meters: data.distanceMeters,
-      check_out_location_status: data.locationStatus
-    };
+    // ── Use emp_code (TEXT) — no UUID needed ──────────────────────────────
+    let empCode: string | null = null;
 
     try {
-      const { error: sbErr } = await supabase
+      const { data: empRow } = await supabase
+        .from("employees")
+        .select("emp_code")
+        .eq("official_email", currentUser.email)
+        .maybeSingle();
+      if (empRow?.emp_code) empCode = empRow.emp_code;
+    } catch { /* ignore */ }
+
+    if (!empCode) empCode = currentUser.empCode || null;
+
+    if (!empCode) {
+      showToast("Could not identify your employee code. Contact admin.", "error");
+      return;
+    }
+
+    const today = getLocalDateString();
+    const timeFormatted = new Date().toLocaleTimeString("en-GB");
+    console.log("[CheckOut] emp_code:", empCode, "date:", today);
+
+    try {
+      const { data: existing, error: existErr } = await supabase
         .from("attendance")
-        .update(dbRow)
-        .eq("employee_id", dbId)
-        .eq("date", todayStr);
+        .select("id")
+        .eq("emp_code", empCode)
+        .eq("attendance_date", today)
+        .maybeSingle();
 
-      if (sbErr) throw sbErr;
+      if (existErr) throw existErr;
 
+      if (!existing) {
+        throw new Error("Must check in before checking out.");
+      }
+
+      const { error: resErr } = await supabase
+        .from("attendance")
+        .update({ check_out: timeFormatted })
+        .eq("id", existing.id);
+
+      if (resErr) throw resErr;
+
+      showToast("Checked out successfully!", "success");
+      window.dispatchEvent(new Event("storage-sync"));
       await fetchAttendance();
+
       setActivities(prev => [{
         id: Date.now(),
         user: currentUser.name,
@@ -853,7 +922,8 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
         avatar: currentUser.avatar,
       }, ...prev]);
     } catch (err: any) {
-      console.error("Check-out update failed:", err.message);
+      console.error("Check-out failed:", err.message);
+      showToast("Check-out failed: " + err.message, "error");
     }
   };
 
@@ -885,7 +955,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   useEffect(() => {
     const id = setInterval(() =>
       setLiveTime(new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }))
-    , 1000);
+      , 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -930,7 +1000,10 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
                 </div>
                 <div>
                   <div className="text-[10px] uppercase font-bold text-white/50">Punch Out</div>
-                  <div className="font-display text-sm font-bold mt-1 text-white">{userAttendance?.checkOut || "-"}</div>
+                  <div className="font-display text-sm font-bold mt-1 text-white">
+                    {/* FIX 2: use isCheckedOut helper */}
+                    {isCheckedOut(userAttendance?.checkOut) ? userAttendance?.checkOut : "-"}
+                  </div>
                 </div>
               </div>
             )}
@@ -971,7 +1044,8 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
                 <div className="text-center py-3 text-sm font-bold text-white/70 bg-white/5 rounded-xl border border-white/10">
                   Marked Absent ❌
                 </div>
-              ) : userAttendance.checkOut === "-" ? (
+              ) : !isCheckedOut(userAttendance.checkOut) ? (
+                /* FIX 2: use isCheckedOut() instead of === "-" */
                 <button
                   onClick={() => setShowCheckOutModal(true)}
                   className="w-full flex h-11 items-center justify-center gap-2 rounded-xl bg-rose-600 text-sm font-bold text-white hover:bg-rose-700 transition-colors shadow"
@@ -991,7 +1065,6 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
               </div>
             )}
 
-            {/* Show selfie thumbnail for the current user */}
             {userAttendance?.selfiePhoto && (
               <button
                 onClick={() => setViewSelfie({ src: userAttendance.selfiePhoto!, name: currentUser.name })}
@@ -1007,7 +1080,6 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
 
         {/* Right: 4 stats + compact calendar */}
         <div className="lg:col-span-2 flex flex-col gap-3">
-          {/* Top 4 KPI cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
               { label: "Total Present", value: presentCount.toString(), icon: <CheckCircle2 className="h-4 w-4" />, color: "from-emerald-500 to-teal-600", delta: `${((presentCount / (totalEmployees || 1)) * 100).toFixed(1)}% rate` },
@@ -1025,7 +1097,6 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
               </div>
             ))}
           </div>
-          {/* Compact attendance calendar */}
           <AttendanceCalendarWidget currentUser={currentUser} compact />
         </div>
       </div>
@@ -1106,7 +1177,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
                     </td>
                     <td className="px-6 py-3.5"><Badge variant="indigo">{a.department}</Badge></td>
                     <td className="px-6 py-3.5 text-sm text-slate-700 font-medium">{a.checkIn}</td>
-                    <td className="px-6 py-3.5 text-sm text-slate-700">{a.checkOut}</td>
+                    <td className="px-6 py-3.5 text-sm text-slate-700">{isCheckedOut(a.checkOut) ? a.checkOut : "-"}</td>
                     <td className="px-6 py-3.5 text-sm font-semibold text-slate-700">
                       {formatWorkHours(a.checkInTime, a.checkOutTime)}
                     </td>
@@ -1235,7 +1306,6 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
         </Card>
       )}
 
-
       {/* -- Modals -- */}
       {showCheckInModal && (
         <SecureCheckInModal
@@ -1258,7 +1328,22 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
           onClose={() => setViewSelfie(null)}
         />
       )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed right-6 top-6 z-[100] flex items-center gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-xl backdrop-blur-md animate-in slide-in-from-top-5 duration-300">
+          <div className={`flex h-8 w-8 items-center justify-center rounded-xl text-white ${toast.type === "success" ? "bg-emerald-500" : "bg-rose-500"}`}>
+            {toast.type === "success" ? "✓" : "⚠️"}
+          </div>
+          <div>
+            <div className="text-xs font-bold text-slate-900">{toast.type === "success" ? "Success" : "Error"}</div>
+            <div className="text-[11px] text-slate-500 font-medium">{toast.message}</div>
+          </div>
+          <button onClick={() => setToast(null)} className="ml-4 text-slate-400 hover:text-slate-600">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
-

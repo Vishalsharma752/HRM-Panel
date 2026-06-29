@@ -177,14 +177,9 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
       official_email: newEmp.email.trim(),
       mobile: newEmp.phone?.trim() || null,
       department: newEmp.department.trim(),
-      designation: newEmp.designation.trim(),
       role: newEmp.role || "Employee",
       status: newEmp.status || "Active",
       doj: newEmp.joinDate || new Date().toISOString().split("T")[0],
-      location: newEmp.location || "India",
-      manager: newEmp.manager?.trim() || null,
-      salary: newEmp.salary || null,
-      password: newEmp.password || "Password123!",
     };
 
     console.log("[Employees] INSERT →", dbRow);
@@ -200,6 +195,32 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
 
       console.log("[Employees] INSERT result:", data);
       showToast(`Employee "${newEmp.name}" added successfully.`, "success");
+
+      // Auto-trigger auth creation and welcome email delivery via backend Resend service
+      try {
+        const tempPassword = `Welcome${Math.floor(10000 + Math.random() * 90000)}!`;
+        const backendUrl = window.location.port === "5173"
+          ? "http://localhost:3000/api/employees/welcome"
+          : "/api/employees/welcome";
+
+        const res = await fetch(backendUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: newEmp.email.trim(),
+            name: newEmp.name.trim(),
+            tempPassword
+          })
+        });
+        const resJson = await res.json();
+        if (res.ok && resJson.success) {
+          console.log("[Employees] Auth account created and Welcome email sent via Resend.");
+        } else {
+          console.warn("[Employees] Welcome automation failed:", resJson.error || "Unknown error");
+        }
+      } catch (autoErr) {
+        console.warn("[Employees] Welcome email automation error:", autoErr);
+      }
 
       // Refetch to get server-assigned ID and emp_code
       await refetch();
@@ -235,14 +256,9 @@ export function Employees({ search, setSearch }: { search?: string; setSearch?: 
       official_email: updatedEmp.email.trim(),
       mobile: updatedEmp.phone?.trim() || null,
       department: updatedEmp.department.trim(),
-      designation: updatedEmp.designation.trim(),
       role: updatedEmp.role || "Employee",
       status: updatedEmp.status || "Active",
       doj: updatedEmp.joinDate || null,
-      location: updatedEmp.location || null,
-      manager: updatedEmp.manager?.trim() || null,
-      salary: updatedEmp.salary || null,
-      password: updatedEmp.password || "Password123!",
     };
 
     console.log("[Employees] UPDATE id=" + dbId + " →", dbRow);

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, UserCheck, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Mail, Lock, Eye, EyeOff, ShieldCheck, ArrowRight, Sparkles, UserCheck, Loader2, AlertCircle, Calendar } from "lucide-react";
 import { BrandLogo, Button, Input } from "../components/ui";
 import { validatePassword } from "../data/store";
 import { supabase } from "../components/supabase";
@@ -11,9 +11,15 @@ interface LoginProps {
   clearAuthError: () => void;
 }
 
+function generateSecureToken(): string {
+  const array = new Uint8Array(16);
+  window.crypto.getRandomValues(array);
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function Login({ onSignIn, authLoading, authError, clearAuthError }: LoginProps) {
   const [showPwd, setShowPwd] = useState(false);
-  const [view, setView] = useState<"login" | "forgot" | "change">("login");
+  const [view, setView] = useState<"login" | "forgot" | "change" | "reset">("login");
 
   // Login form state
   const [email, setEmail] = useState("admin@tisnx.com");
@@ -26,6 +32,57 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
   const [localError, setLocalError] = useState("");
   const [localLoading, setLocalLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+
+  // Token-based password reset states
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [tokenStatus, setTokenStatus] = useState<"loading" | "valid" | "invalid" | "expired">("loading");
+  const [resetUserEmail, setResetUserEmail] = useState("");
+
+  const verifyToken = async (token: string) => {
+    setTokenStatus("loading");
+    setView("reset");
+    try {
+      const { data, error } = await supabase
+        .from("password_resets")
+        .select("*")
+        .eq("token", token)
+        .eq("used", false)
+        .maybeSingle();
+
+      if (error || !data) {
+        setTokenStatus("invalid");
+        return;
+      }
+
+      const expiresAt = new Date(data.expires_at).getTime();
+      const now = Date.now();
+      if (now > expiresAt) {
+        setTokenStatus("expired");
+        return;
+      }
+
+      setResetUserEmail(data.email);
+      setTokenStatus("valid");
+    } catch {
+      setTokenStatus("invalid");
+    }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const path = window.location.pathname;
+    const token = params.get("token");
+
+    if (path.includes("/reset-password") || token) {
+      if (token) {
+        setResetToken(token);
+        verifyToken(token);
+      } else {
+        setTokenStatus("invalid");
+        setView("reset");
+      }
+    }
+  }, []);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,38 +110,138 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
     setLocalLoading(true);
 
     try {
-      // Try Supabase Auth password reset email first
+      // 1. Verify if user exists in employees table
+      const { data: empData, error: empErr } = await supabase
+        .from("employees")
+        .select("full_name, official_email, status")
+        .ilike("official_email", resetEmail.trim())
+        .limit(1)
+        .maybeSingle();
+
+      if (empErr || !empData) {
+        setLocalError("No account found with this email address.");
+        setLocalLoading(false);
+        return;
+      }
+
+      if (empData.status === "Inactive") {
+        setLocalError("This account has been deactivated. Contact Administrator.");
+        setLocalLoading(false);
+        return;
+      }
+
+      // 2. Generate secure token & save it
+      const token = generateSecureToken();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 mins expiry
+
+      const { error: resetErr } = await supabase
+        .from("password_resets")
+        .insert([{
+          email: empData.official_email,
+          token,
+          expires_at: expiresAt,
+          used: false
+        }]);
+
+      if (resetErr) throw resetErr;
+
+      // 3. Send email using Resend
+      const resetLink = `${window.location.origin}/reset-password?token=${token}`;
+      const backendUrl = window.location.port === "5173"
+        ? "http://localhost:3000/api/auth/send-reset-email"
+        : "/api/auth/send-reset-email";
+
+      const response = await fetch(backendUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: empData.official_email,
+          name: empData.full_name,
+          resetLink,
+        }),
+      });
+
+      const resJson = await response.json();
+      if (!response.ok || !resJson.success) {
+        throw new Error(resJson.error || "Email delivery failed.");
+      }
+
+      setSuccessMessage("Password reset email sent using Resend. Check your inbox.");
+    } catch (ex: any) {
+      console.warn("[Login] Resend delivery not supported or failed, falling back to client-side resetPasswordForEmail()", ex);
+      
       const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
         redirectTo: `${window.location.origin}/?reset=true`,
       });
 
       if (error) {
-        // Supabase Auth reset failed — verify email exists in employees table
-        const { data, error: dbErr } = await supabase
-          .from("employees")
-          .select("official_email, status")
-          .or(`official_email.ilike.${resetEmail.trim()},email.ilike.${resetEmail.trim()}`)
-          .limit(1)
-          .maybeSingle();
-
-        if (dbErr || !data) {
-          setLocalError("No account found with this email address.");
-          setLocalLoading(false);
-          return;
-        }
-        if (data.status === "Inactive") {
-          setLocalError("This account has been deactivated. Contact Administrator.");
-          setLocalLoading(false);
-          return;
-        }
-
-        // Email exists in employees table — let them set new password locally
-        setView("change");
+        setLocalError(`Failed to send password reset: ${error.message}`);
       } else {
-        setSuccessMessage("Password reset email sent. Check your inbox.");
+        setSuccessMessage("Password reset email sent via Supabase. Check your inbox.");
       }
-    } catch (ex: any) {
-      setLocalError("An error occurred. Please try again.");
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError("");
+    setLocalLoading(true);
+
+    if (newPassword !== confirmPassword) {
+      setLocalError("Passwords do not match.");
+      setLocalLoading(false);
+      return;
+    }
+
+    const validationErr = validatePassword(newPassword);
+    if (validationErr) {
+      setLocalError(validationErr);
+      setLocalLoading(false);
+      return;
+    }
+
+    try {
+      // 1. Update password in employees table
+      const { error: dbErr } = await supabase
+        .from("employees")
+        .update({ password: newPassword })
+        .ilike("official_email", resetUserEmail);
+
+      if (dbErr && dbErr.code !== "42703") {
+        throw dbErr;
+      }
+
+      // 2. Update password in Supabase Auth (if they have an active session or account)
+      try {
+        await supabase.auth.updateUser({ password: newPassword });
+      } catch (authErr) {
+        console.warn("[Login] Auth updateUser skipped/failed (expected if link clicked without active session):", authErr);
+      }
+
+      // 3. Invalidate reset token
+      if (resetToken) {
+        await supabase
+          .from("password_resets")
+          .update({ used: true })
+          .eq("token", resetToken);
+      }
+
+      setSuccessMessage("Password updated successfully. You will be redirected to the sign-in page.");
+      setTimeout(() => {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setView("login");
+        setEmail(resetUserEmail);
+        setPassword(newPassword);
+        setNewPassword("");
+        setConfirmPassword("");
+        setSuccessMessage("");
+        setLocalError("");
+      }, 3000);
+    } catch (err: any) {
+      console.error("[Login] reset password update error:", err.message);
+      setLocalError(`Password reset failed: ${err.message}`);
     } finally {
       setLocalLoading(false);
     }
@@ -117,13 +274,17 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
       const { error: dbErr } = await supabase
         .from("employees")
         .update({ password: newPassword })
-        .or(`official_email.ilike.${resetEmail.trim()},email.ilike.${resetEmail.trim()}`);
+        .ilike("official_email", resetEmail.trim());
 
       if (dbErr) {
-        console.error("[Login] DB password update error:", dbErr.message);
-        setLocalError(`Database update failed: ${dbErr.message}`);
-        setLocalLoading(false);
-        return;
+        if (dbErr.code === "42703") {
+          console.warn("[Login] DB employees table does not support password column (non-fatal):", dbErr.message);
+        } else {
+          console.error("[Login] DB password update error:", dbErr.message);
+          setLocalError(`Database update failed: ${dbErr.message}`);
+          setLocalLoading(false);
+          return;
+        }
       }
 
       setSuccessMessage("Password updated successfully. Please sign in with your new password.");
@@ -134,7 +295,8 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
         setNewPassword("");
         setConfirmPassword("");
         setSuccessMessage("");
-      }, 2000);
+        setLocalError("");
+      }, 3000);
     } catch (ex: any) {
       setLocalError("An error occurred. Please try again.");
     } finally {
@@ -420,6 +582,114 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
                 </Button>
               </div>
             </form>
+          )}
+
+          {/* ── RESET PASSWORD VIEW (TOKEN VALIDATION) ── */}
+          {view === "reset" && (
+            <div className="space-y-6">
+              {tokenStatus === "loading" && (
+                <div className="flex flex-col items-center justify-center p-8 bg-white/40 backdrop-blur border border-slate-200/60 rounded-2xl text-center">
+                  <Loader2 className="h-10 w-10 animate-spin text-indigo-600 mb-4" />
+                  <h3 className="font-bold text-slate-800">Verifying reset token…</h3>
+                  <p className="text-xs text-slate-500 mt-1">Checking link authenticity and validity</p>
+                </div>
+              )}
+
+              {tokenStatus === "invalid" && (
+                <div className="flex flex-col items-center justify-center p-8 bg-rose-50/50 border border-rose-100/60 rounded-2xl text-center">
+                  <div className="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 mb-4">
+                    <AlertCircle className="h-6 w-6" />
+                  </div>
+                  <h3 className="font-bold text-rose-950">Invalid Reset Token</h3>
+                  <p className="text-sm text-rose-700/80 mt-1.5 leading-relaxed">
+                    This password reset link is invalid, expired, or has already been used. Please request a new password reset link.
+                  </p>
+                  <Button
+                    onClick={() => { setView("login"); clearAuthError(); setLocalError(""); }}
+                    variant="neutral"
+                    className="mt-6"
+                  >
+                    Go back to sign in
+                  </Button>
+                </div>
+              )}
+
+              {tokenStatus === "expired" && (
+                <div className="flex flex-col items-center justify-center p-8 bg-amber-50/50 border border-amber-100/60 rounded-2xl text-center">
+                  <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 mb-4">
+                    <Calendar className="h-6 w-6" />
+                  </div>
+                  <h3 className="font-bold text-amber-950">Reset Link Expired</h3>
+                  <p className="text-sm text-amber-700/80 mt-1.5 leading-relaxed">
+                    For security reasons, password reset links expire after 15 minutes. This link has expired.
+                  </p>
+                  <Button
+                    onClick={() => { setView("forgot"); clearAuthError(); setLocalError(""); }}
+                    variant="gradient"
+                    className="mt-6"
+                  >
+                    Request new link
+                  </Button>
+                </div>
+              )}
+
+              {tokenStatus === "valid" && (
+                <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                  <div>
+                    <h2 className="font-display text-3xl font-extrabold tracking-tight text-slate-900">Choose new password</h2>
+                    <p className="mt-1.5 text-sm text-slate-500">Choose a secure password for account: <strong>{resetUserEmail}</strong></p>
+                  </div>
+                  
+                  {displayError && (
+                    <div className="rounded-xl bg-rose-50 border border-rose-100 p-3.5 text-xs font-semibold text-rose-700">⚠️ {displayError}</div>
+                  )}
+                  {successMessage && (
+                    <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3.5 text-xs font-semibold text-emerald-700">✓ {successMessage}</div>
+                  )}
+
+                  <div className="space-y-4">
+                    <Input
+                      label="New Password"
+                      type="password"
+                      id="reset-password-field"
+                      leftIcon={<Lock className="h-4 w-4" />}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      required
+                      disabled={isSubmitting}
+                    />
+                    <Input
+                      label="Confirm New Password"
+                      type="password"
+                      id="reset-confirm-field"
+                      leftIcon={<Lock className="h-4 w-4" />}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      required
+                      disabled={isSubmitting}
+                    />
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs">
+                      <div className="font-semibold text-slate-700">Password requirements</div>
+                      <ul className="mt-1.5 space-y-1 text-slate-500">
+                        <li className={newPassword.length >= 8 ? "text-emerald-600" : ""}>✓ At least 8 characters</li>
+                        <li className={/[A-Z]/.test(newPassword) ? "text-emerald-600" : ""}>✓ One uppercase letter</li>
+                        <li className={/[0-9\W]/.test(newPassword) ? "text-emerald-600" : ""}>✓ One number or symbol</li>
+                      </ul>
+                    </div>
+                    <Button
+                      type="submit"
+                      variant="gradient"
+                      size="lg"
+                      className="w-full"
+                      disabled={isSubmitting}
+                      rightIcon={isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                    >
+                      {isSubmitting ? "Resetting Password…" : "Reset Password"}
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
           )}
         </div>
       </div>
