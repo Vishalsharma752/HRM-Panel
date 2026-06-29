@@ -59,6 +59,8 @@ export interface LeaveRequest {
 
 export interface AttendanceRecord {
   id: string;
+  empId?: string;
+  empCode?: string;           // emp_code from attendance table — used for reliable matching
   name: string;
   department: string;
   checkIn: string;

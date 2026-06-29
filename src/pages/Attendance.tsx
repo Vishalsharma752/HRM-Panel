@@ -704,8 +704,12 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
   // FIX 1: Always use local date, never toISOString() — already defined above as module-level util
   const todayStr = getLocalDateString();
 
-  // FIX 3: Match by user_id (UUID) not name — most reliable
-  const userAttendance = attendance.find(a => a.date === todayStr && a.name.trim() === currentUser.name.trim());
+  // Match today's record for the current user — check both name AND empCode for reliability
+  const userAttendance = attendance.find(a =>
+    a.date === todayStr &&
+    (a.name.trim() === currentUser.name.trim() ||
+     (a as any).empCode === currentUser.empCode)
+  );
 
   const fetchAttendance = useCallback(async () => {
     try {
@@ -717,15 +721,51 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
 
       if (err) throw err;
 
-      if (data) {
+      if (data && data.length > 0) {
+        // Batch-resolve emp_codes to employee names once
+        const empCodeSet = new Set(data.map((r: any) => r.emp_code).filter(Boolean));
+        let empCodeToInfo: Record<string, { name: string; department: string; id: string }> = {};
+
+        // First: try matching from the already-loaded employees array in memory
+        employees.forEach((e: any) => {
+          if (e.empCode && empCodeSet.has(e.empCode)) {
+            empCodeToInfo[e.empCode] = {
+              name: e.name || e.full_name || e.empCode,
+              department: e.department || "General",
+              id: e.id || "EMP-000",
+            };
+          }
+        });
+
+        // Second: for any emp_codes still unresolved, fetch from Supabase
+        const unresolved = [...empCodeSet].filter(c => !empCodeToInfo[c]);
+        if (unresolved.length > 0) {
+          try {
+            const { data: empRows } = await supabase
+              .from("employees")
+              .select("emp_code, full_name, department, id")
+              .in("emp_code", unresolved);
+            if (empRows) {
+              empRows.forEach((e: any) => {
+                if (e.emp_code) {
+                  empCodeToInfo[e.emp_code] = {
+                    name: e.full_name || e.emp_code,
+                    department: e.department || "General",
+                    id: String(e.id),
+                  };
+                }
+              });
+            }
+          } catch {
+            // ignore — fallback to emp_code string
+          }
+        }
+
         const mapped: AttendanceRecord[] = data.map((row: any) => {
-          // Match by emp_code (TEXT) — simple and reliable
-          const matchedEmp = employees.find(e =>
-            e.empCode === row.emp_code
-          );
-          const empName = matchedEmp ? matchedEmp.name : (row.emp_code || "Unknown");
-          const empDept = matchedEmp ? (matchedEmp as any).department || "General" : "General";
-          const rawId = matchedEmp ? matchedEmp.id.replace("EMP-", "") : "000";
+          const info = empCodeToInfo[row.emp_code];
+          const empName = info ? info.name : (row.emp_code || "Unknown");
+          const empDept = info ? info.department : "General";
+          const rawId = info ? info.id.replace("EMP-", "") : "000";
           const padId = String(rawId).padStart(3, "0");
 
           const rawCheckOut = row.check_out;
@@ -734,6 +774,7 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
           return {
             id: row.id,
             empId: `EMP-${padId}`,
+            empCode: row.emp_code,
             name: empName.trim(),
             department: empDept,
             checkIn: row.check_in || "-",
@@ -743,18 +784,21 @@ export function Attendance({ currentUser, search, setSearch }: { currentUser: Sy
               `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs><rect width="80" height="80" rx="40" fill="url(#g)"/><text x="50%" y="54%" text-anchor="middle" font-family="Inter, sans-serif" font-size="28" font-weight="700" fill="white" dominant-baseline="middle">${(empName || "U").split(" ").map((p: any) => p[0]).slice(0, 2).join("").toUpperCase()}</text></svg>`
             )}`,
             date: row.attendance_date,
-            checkInTime: row.attendance_date && row.check_in ? `${row.attendance_date}T${row.check_in}` : undefined,
+            checkInTime: row.attendance_date && row.check_in && row.check_in !== "-" ? `${row.attendance_date}T${row.check_in}` : undefined,
             checkOutTime: (row.attendance_date && normalizedCheckOut && normalizedCheckOut !== "-") ? `${row.attendance_date}T${normalizedCheckOut}` : undefined,
           };
         });
 
-        const filtered = mapped.filter(a => isAdmin || a.name === currentUser.name.trim());
+        const filtered = mapped.filter(a =>
+          isAdmin || a.name === currentUser.name.trim() || (a as any).empCode === currentUser.empCode
+        );
         setAttendance(filtered);
       }
     } catch (e: any) {
       console.error("Failed to fetch attendance:", e.message);
     }
-  }, [employees, currentUser.name, isAdmin]);
+  }, [employees, currentUser.name, currentUser.empCode, isAdmin]);
+
 
 
   // FIX 4: Only fetch after employees are loaded — prevents "Unknown" name mismatch
