@@ -504,10 +504,7 @@ export function Leave({ currentUser, search, setSearch }: { currentUser: SyncedE
           <CardHeader title="Your Leave Balance" subtitle="FY 2024–25" />
           <div className="space-y-4 p-6 pt-2">
             {[
-              { label: "Casual Leave", used: casualUsed, total: 12, color: "from-amber-500 to-orange-500" },
-              { label: "Sick Leave", used: sickUsed, total: 8, color: "from-rose-500 to-pink-500" },
-              { label: "Earned Leave", used: earnedUsed, total: 20, color: "from-indigo-500 to-violet-500" },
-              { label: "Work From Home", used: wfhUsed, total: 24, color: "from-emerald-500 to-teal-500" },
+              { label: "Casual Leave", used: casualUsed, total: 1, color: "from-amber-500 to-orange-500" },
             ].map((b) => (
               <div key={b.label}>
                 <div className="mb-1.5 flex items-center justify-between text-xs">
@@ -610,9 +607,6 @@ function ApplyLeaveModal({ onClose, onApply }: { onClose: () => void; onApply: (
           <div className="grid grid-cols-2 gap-3">
             {[
               { label: "Casual Leave", icon: Coffee, color: "from-amber-500 to-orange-500" },
-              { label: "Sick Leave", icon: Heart, color: "from-rose-500 to-pink-600" },
-              { label: "Earned Leave", icon: Plane, color: "from-indigo-500 to-violet-600" },
-              { label: "Work From Home", icon: Briefcase, color: "from-emerald-500 to-teal-600" },
             ].map((t) => {
               const Icon = t.icon;
               const isSelected = type === t.label;

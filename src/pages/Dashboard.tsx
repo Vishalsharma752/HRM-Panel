@@ -84,7 +84,7 @@ export function Dashboard({ onNavigate, currentUser }: { onNavigate: (p: any) =>
     
     const myLeaves = leaves.filter(l => l.employee === currentUser.name);
     const approvedLeaveDays = myLeaves.filter(l => l.status === "Approved").reduce((sum, l) => sum + l.days, 0);
-    const leaveBalance = Math.max(0, 24 - approvedLeaveDays);
+    const leaveBalance = Math.max(0, 1 - approvedLeaveDays);
 
     const handleCheckIn = () => {
       const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
