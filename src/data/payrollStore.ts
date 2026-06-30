@@ -80,7 +80,7 @@ export function computePayroll(
   overtimeHours: number
 ) {
   const perDaySalary = structure.basicSalary / workingDays;
-  const unpaidLeaveDeduction = Math.round(perDaySalary * unpaidLeaveDays);
+  const unpaidLeaveDeduction = Math.round(perDaySalary * (unpaidLeaveDays + absentDays));
   const overtimePay = Math.round(overtimeHours * (perDaySalary / 8));
 
   const grossSalary = Math.round(

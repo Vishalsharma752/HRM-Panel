@@ -68,19 +68,19 @@ const STATUS_CFG: Record<
     label: "Present",
   },
   late: {
-    cell: "bg-amber-50 border-amber-200 hover:bg-amber-100 hover:border-amber-300",
-    numColor: "text-amber-800",
-    dot: "bg-amber-500",
-    badgeBg: "bg-amber-100",
-    badgeText: "text-amber-800",
-    label: "Late",
-  },
-  leave: {
     cell: "bg-sky-50 border-sky-200 hover:bg-sky-100 hover:border-sky-300",
     numColor: "text-sky-800",
     dot: "bg-sky-500",
     badgeBg: "bg-sky-100",
     badgeText: "text-sky-800",
+    label: "Late",
+  },
+  leave: {
+    cell: "bg-amber-50 border-amber-200 hover:bg-amber-100 hover:border-amber-300",
+    numColor: "text-amber-800",
+    dot: "bg-amber-500",
+    badgeBg: "bg-amber-100",
+    badgeText: "text-amber-800",
     label: "On Leave",
   },
   absent: {
@@ -138,17 +138,17 @@ const SUMMARY_STATS = [
     key: "late" as DayStatus,
     label: "Late",
     icon: Timer,
-    gradient: "from-amber-500 to-orange-500",
-    bg: "bg-amber-50",
-    numColor: "text-amber-700",
+    gradient: "from-sky-500 to-blue-500",
+    bg: "bg-sky-50",
+    numColor: "text-sky-700",
   },
   {
     key: "leave" as DayStatus,
     label: "On Leave",
     icon: Plane,
-    gradient: "from-sky-500 to-blue-500",
-    bg: "bg-sky-50",
-    numColor: "text-sky-700",
+    gradient: "from-amber-500 to-orange-500",
+    bg: "bg-amber-50",
+    numColor: "text-amber-700",
   },
 ];
 
@@ -171,6 +171,7 @@ function resolveDayStatus(
   if (record) {
     if (record.status === "Late") return "late";
     if (record.status === "On Leave") return "leave";
+    if (record.status === "Absent") return "absent";
     return "present";
   }
   if (dateStr === todayStr) return "today-empty";
@@ -206,8 +207,8 @@ function DayDetailModal({
 
   const bannerBg: Record<DayStatus, string> = {
     present: "bg-emerald-50",
-    late: "bg-amber-50",
-    leave: "bg-sky-50",
+    late: "bg-sky-50",
+    leave: "bg-amber-50",
     absent: "bg-rose-50",
     future: "bg-slate-50",
     weekend: "bg-slate-50",
@@ -215,8 +216,8 @@ function DayDetailModal({
   };
   const iconBg: Record<DayStatus, string> = {
     present: "bg-emerald-100",
-    late: "bg-amber-100",
-    leave: "bg-sky-100",
+    late: "bg-sky-100",
+    leave: "bg-amber-100",
     absent: "bg-rose-100",
     future: "bg-slate-100",
     weekend: "bg-slate-100",
@@ -224,8 +225,8 @@ function DayDetailModal({
   };
   const iconColor: Record<DayStatus, string> = {
     present: "text-emerald-600",
-    late: "text-amber-600",
-    leave: "text-sky-600",
+    late: "text-sky-600",
+    leave: "text-amber-600",
     absent: "text-rose-600",
     future: "text-slate-400",
     weekend: "text-slate-400",

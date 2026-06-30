@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import {
   X, AlertCircle, Clock, CheckCircle2, XCircle,
@@ -11,6 +11,7 @@ import {
   type AttendanceQuery, type QueryStatus, type QueryType,
 } from "../data/queryStore";
 import type { SyncedEmployee } from "../data/store";
+import { supabase } from "./supabase";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface QueryRaiseData {
@@ -56,6 +57,53 @@ export function RaiseQueryModal({
   const [loading, setLoading]     = useState(false);
   const [success, setSuccess]     = useState(false);
 
+  // Dynamic attendance snapshot fetching
+  const [snapshot, setSnapshot]   = useState<{ checkIn: string; checkOut: string; status: string } | undefined>(data.attendanceSnapshot);
+  const [fetching, setFetching]   = useState(false);
+
+  useEffect(() => {
+    async function fetchAttendanceRecord() {
+      setFetching(true);
+      try {
+        let empCode = currentUser.empCode;
+        if (!empCode) {
+          const { data: empData } = await supabase
+            .from("employees")
+            .select("emp_code")
+            .eq("official_email", currentUser.email)
+            .maybeSingle();
+          if (empData?.emp_code) {
+            empCode = empData.emp_code;
+          }
+        }
+        
+        if (empCode) {
+          const { data: attData } = await supabase
+            .from("attendance")
+            .select("check_in, check_out, status")
+            .eq("emp_code", empCode)
+            .eq("attendance_date", data.dateStr)
+            .maybeSingle();
+          
+          if (attData) {
+            setSnapshot({
+              checkIn: attData.check_in || "—",
+              checkOut: attData.check_out === "-" ? "Active" : (attData.check_out || "—"),
+              status: attData.status || "Absent",
+            });
+          } else {
+            setSnapshot(undefined);
+          }
+        }
+      } catch (err) {
+        console.error("RaiseQueryModal: failed to fetch attendance record:", err);
+      } finally {
+        setFetching(false);
+      }
+    }
+    fetchAttendanceRecord();
+  }, [data.dateStr, currentUser]);
+
   const validate = () => {
     const e: Record<string, string> = {};
     if (!subject.trim())      e.subject = "Subject is required.";
@@ -78,7 +126,7 @@ export function RaiseQueryModal({
       queryType,
       subject:       subject.trim(),
       description:   description.trim(),
-      attendanceSnapshot: data.attendanceSnapshot,
+      attendanceSnapshot: snapshot,
     });
     setLoading(false);
     setSuccess(true);
@@ -135,12 +183,17 @@ export function RaiseQueryModal({
             </div>
 
             {/* Attendance snapshot */}
-            {data.attendanceSnapshot ? (
+            {fetching ? (
+              <div className="flex items-center justify-center p-6 text-slate-500 gap-2 border border-slate-100 rounded-xl bg-slate-50/50">
+                <Loader2 className="h-4 w-4 animate-spin text-[#025085]" />
+                <span className="text-xs font-semibold">Loading attendance snapshot...</span>
+              </div>
+            ) : snapshot ? (
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { label: "Check In",  value: data.attendanceSnapshot.checkIn || "—" },
-                  { label: "Check Out", value: data.attendanceSnapshot.checkOut === "-" ? "Active" : (data.attendanceSnapshot.checkOut || "—") },
-                  { label: "Status",    value: data.attendanceSnapshot.status },
+                  { label: "Check In",  value: snapshot.checkIn || "—" },
+                  { label: "Check Out", value: snapshot.checkOut === "-" ? "Active" : (snapshot.checkOut || "—") },
+                  { label: "Status",    value: snapshot.status },
                 ].map((f) => (
                   <div key={f.label} className="rounded-xl bg-slate-50 border border-slate-100 p-2.5 text-center">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{f.label}</div>
