@@ -399,7 +399,7 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
                   label="Work Email"
                   type="email"
                   id="login-email"
-                  placeholder="you@tisnx.com"
+                  placeholder="admin@tisnx.com"
                   leftIcon={<Mail className="h-4 w-4" />}
                   value={email}
                   onChange={(e) => { setEmail(e.target.value); clearAuthError(); setLocalError(""); }}
@@ -498,7 +498,7 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
                   label="Work Email"
                   type="email"
                   id="forgot-email"
-                  placeholder="you@tisnx.com"
+                  placeholder="admin@tisnx.com"
                   leftIcon={<Mail className="h-4 w-4" />}
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
@@ -606,7 +606,7 @@ export function Login({ onSignIn, authLoading, authError, clearAuthError }: Logi
                   </p>
                   <Button
                     onClick={() => { setView("login"); clearAuthError(); setLocalError(""); }}
-                    variant="neutral"
+                    variant="ghost"
                     className="mt-6"
                   >
                     Go back to sign in

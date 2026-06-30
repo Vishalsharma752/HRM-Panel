@@ -122,6 +122,20 @@ function getSafeParsed<T>(key: string, fallback: T): T {
 export const initStorage = () => {
   if (typeof window === "undefined") return;
 
+  // Bump version stamp to wipe legacy mock data from browser cache
+  const HRMS_CLEAR_VERSION = "v4-clean";
+  const clearedVersion = localStorage.getItem("hrms_data_cleared");
+  if (clearedVersion !== HRMS_CLEAR_VERSION) {
+    localStorage.removeItem(`${STORE_PREFIX}employees`);
+    localStorage.removeItem(`${STORE_PREFIX}leaves`);
+    localStorage.removeItem(`${STORE_PREFIX}attendance`);
+    localStorage.removeItem(`${STORE_PREFIX}notifications_v2`);
+    localStorage.removeItem(`${STORE_PREFIX}activities`);
+    localStorage.removeItem(`${STORE_PREFIX}payroll_structures`);
+    localStorage.removeItem(`${STORE_PREFIX}payroll_records`);
+    localStorage.setItem("hrms_data_cleared", HRMS_CLEAR_VERSION);
+  }
+
   // 1. Employees
   const defaultEmployees: SyncedEmployee[] = initialEmployees.map(emp => ({
     ...emp,
@@ -132,11 +146,9 @@ export const initStorage = () => {
   localStorage.setItem(`${STORE_PREFIX}employees`, JSON.stringify(currentEmployees));
 
   // 2. Tasks — default to empty; real tasks are created by users at runtime.
-  // Version stamp: bump TASKS_CLEAR_VERSION to force-wipe stale localStorage data.
   const TASKS_CLEAR_VERSION = "v2";
-  const clearedVersion = localStorage.getItem("hrms_tasks_cleared");
-  if (clearedVersion !== TASKS_CLEAR_VERSION) {
-    // Wipe both legacy and current task keys so dummy data cannot persist
+  const clearedTasksVersion = localStorage.getItem("hrms_tasks_cleared");
+  if (clearedTasksVersion !== TASKS_CLEAR_VERSION) {
     localStorage.removeItem("hrms_tasks");
     localStorage.removeItem(`${STORE_PREFIX}tasks`);
     localStorage.setItem("hrms_tasks_cleared", TASKS_CLEAR_VERSION);
