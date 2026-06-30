@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { sendEmail } from "../../../lib/resend";
+import { sendEmail } from "@/lib/resend";
 
 export async function POST(req: Request) {
   try {
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
 
     if (error) {
       console.error("Resend error sending reset password email:", error);
-      return NextResponse.json({ error: error.message || "Email delivery failed via Resend" }, { status: 500 });
+      return NextResponse.json({ error: error || "Email delivery failed via Resend" }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });

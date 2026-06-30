@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServiceClient } from "../../../lib/supabase";
-import { sendEmail } from "../../../lib/resend";
+import { getServiceClient } from "@/lib/supabase";
+import { sendEmail } from "@/lib/resend";
 
 export async function GET(req: Request) {
   try {
@@ -56,8 +56,12 @@ export async function GET(req: Request) {
         </div>
       `;
 
+      const activeEmails = employees
+        .map((e) => e.official_email)
+        .filter((email): email is string => !!email);
+
       const res = await sendEmail({
-        to: emp.official_email,
+        to: activeEmails,
         subject,
         html: htmlContent,
         templateType: "Birthday",

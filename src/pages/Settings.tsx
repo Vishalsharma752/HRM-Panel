@@ -558,6 +558,28 @@ function ResetPasswordModal({
       prev.map(emp => (emp.id === employee.id ? { ...emp, password: newPwd } : emp))
     );
 
+    // Update password in database
+    const updatePassword = async () => {
+      try {
+        const parts = employee.id.split("-");
+        const dbId = parseInt(parts[parts.length - 1] || "", 10);
+        if (!isNaN(dbId)) {
+          const { error: dbErr } = await supabase
+            .from("employees")
+            .update({ password: newPwd })
+            .eq("id", dbId);
+          if (dbErr) {
+            console.error("[ResetPasswordModal] Database update failed:", dbErr.message);
+          } else {
+            console.log("[ResetPasswordModal] Database password reset successfully.");
+          }
+        }
+      } catch (err) {
+        console.error("[ResetPasswordModal] Database password update error:", err);
+      }
+    };
+    updatePassword();
+
     alert(`Password reset successfully for ${employee.name}.`);
     onClose();
   };
@@ -802,6 +824,41 @@ function ChangePasswordCard({
       })
     );
 
+    // Update password in Supabase Auth and database
+    const updatePassword = async () => {
+      // 1. Update Supabase Auth if the user has an active session
+      try {
+        const { error: authErr } = await supabase.auth.updateUser({ password: newPwd });
+        if (authErr) {
+          console.warn("[ChangePassword] Supabase Auth password update skipped/failed:", authErr.message);
+        } else {
+          console.log("[ChangePassword] Supabase Auth password updated successfully.");
+        }
+      } catch (err) {
+        console.error("[ChangePassword] Supabase Auth password update error:", err);
+      }
+
+      // 2. Update employees table in database
+      try {
+        const parts = currentUser.id.split("-");
+        const dbId = parseInt(parts[parts.length - 1] || "", 10);
+        if (!isNaN(dbId)) {
+          const { error: dbErr } = await supabase
+            .from("employees")
+            .update({ password: newPwd })
+            .eq("id", dbId);
+          if (dbErr) {
+            console.error("[ChangePassword] Database update failed:", dbErr.message);
+          } else {
+            console.log("[ChangePassword] Database password updated successfully.");
+          }
+        }
+      } catch (err) {
+        console.error("[ChangePassword] Database password update error:", err);
+      }
+    };
+    updatePassword();
+
     setSuccess("Password updated successfully!");
     setCurrPwd("");
     setNewPwd("");
@@ -938,6 +995,34 @@ function MyProfileCard({
         return emp;
       })
     );
+
+    // Update in database
+    const updateProfile = async () => {
+      try {
+        const parts = currentUser.id.split("-");
+        const dbId = parseInt(parts[parts.length - 1] || "", 10);
+        if (!isNaN(dbId)) {
+          const { error: dbErr } = await supabase
+            .from("employees")
+            .update({
+              full_name: name,
+              mobile: phone || null,
+              location: location || null,
+              avatar: avatarUrl || null,
+            })
+            .eq("id", dbId);
+          if (dbErr) {
+            console.error("[MyProfileCard] Database update failed:", dbErr.message);
+          } else {
+            console.log("[MyProfileCard] Database profile updated successfully.");
+          }
+        }
+      } catch (err) {
+        console.error("[MyProfileCard] Database profile update error:", err);
+      }
+    };
+    updateProfile();
+
     setSuccess("Profile information saved successfully!");
   };
 

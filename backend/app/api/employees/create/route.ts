@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthUser, isAuthorized } from "../../../../lib/auth";
-import { getServiceClient } from "../../../../lib/supabase";
-import { sendEmail } from "../../../../lib/resend";
+import { getServiceClient } from "@/lib/supabase";
+import { sendEmail } from "@/lib/resend";
 
 export async function POST(req: Request) {
   try {
@@ -79,6 +79,42 @@ export async function POST(req: Request) {
 
     if (emailErr) {
       console.warn("[Employees Create] Welcome email delivery failed:", emailErr);
+    }
+
+    // 3. Send announcement email to all active employees
+    try {
+      const { data: allEmps } = await service
+        .from("employees")
+        .select("official_email")
+        .eq("status", "Active");
+
+      const activeEmails = allEmps
+        ?.map((emp: any) => emp.official_email)
+        .filter((e): e is string => !!e && e.toLowerCase() !== email.trim().toLowerCase()) || [];
+
+      if (activeEmails.length > 0) {
+        const announcementHtml = `
+          <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 30px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+            <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">New Team Member Announcement! 🚀</h2>
+            <p style="color: #334155; font-size: 15px; line-height: 1.6;">Hello Team,</p>
+            <p style="color: #475569; font-size: 15px; line-height: 1.6;">
+              Please join us in welcoming our newest team member, <strong>${name}</strong>, who has joined TIS Nexus! We are excited to have them on board.
+            </p>
+            <div style="margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px; text-align: center;">
+              <p style="font-size: 11px; color: #94a3b8; margin: 0;">TIS Nexus HRM Portal &bull; Announcements</p>
+            </div>
+          </div>
+        `;
+
+        await sendEmail({
+          to: activeEmails,
+          subject: `Welcome our new team member, ${name}! 🚀`,
+          html: announcementHtml,
+          templateType: "NewEmployeeAnnouncement",
+        });
+      }
+    } catch (annError) {
+      console.warn("[Employees Create] New employee announcement email broadcast failed:", annError);
     }
 
     return NextResponse.json({ success: true, employee: newEmp });

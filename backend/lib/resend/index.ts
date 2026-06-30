@@ -22,19 +22,19 @@ export async function sendEmail({
   let responseData: any = null;
 
   try {
-    const response = await resend.emails.send({
+    const { data: resData, error: resError } = await resend.emails.send({
       from: "HR Portal <onboarding@resend.dev>",
       to,
       subject,
       html,
     });
     
-    if (response.error) {
+    if (resError) {
       status = "Failed";
-      errorMessage = typeof response.error === "object" ? JSON.stringify(response.error) : String(response.error);
-      console.error("Resend delivery failure:", response.error);
+      errorMessage = typeof resError === "object" ? JSON.stringify(resError) : String(resError);
+      console.error("Resend delivery failure:", resError);
     } else {
-      responseData = response.data;
+      responseData = resData;
     }
   } catch (error: any) {
     status = "Failed";
